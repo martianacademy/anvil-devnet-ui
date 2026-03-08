@@ -157,6 +157,15 @@ export async function GET(req: NextRequest) {
         }
 
         // ── module=block ──────────────────────────────────────────────────────────
+        // ── module=tx ──────────────────────────────────────────────────────────
+        if (module === "tx" && action === "getrecentlist") {
+            const limit = Math.min(parseInt(p.get("limit") ?? "100"), 500);
+            const rows = db.prepare(
+                "SELECT * FROM transactions WHERE chain_id = ? ORDER BY block_number DESC, nonce DESC LIMIT ?"
+            ).all(chainId, limit);
+            return ok(rows);
+        }
+
         if (module === "block" && action === "getblocklist") {
             const page = parseInt(p.get("page") ?? "1");
             const offset = parseInt(p.get("offset") ?? "10");

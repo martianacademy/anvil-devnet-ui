@@ -3,8 +3,7 @@
 import { useState, useEffect } from "react";
 import { useDevnetStore } from "@/store/useDevnetStore";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { OpcodeTrace } from "./OpcodeTrace";
 import { CallTree } from "./CallTree";
 import { StorageDiff } from "./StorageDiff";
@@ -41,38 +40,9 @@ export function TxDebugger({ hash, tx, receipt }: Props) {
     }, [hash]);
 
     const storageDiffs = extractStorageDiffs(structLogs);
-    const success = receipt?.status === "0x1" || parseInt(receipt?.status ?? "0x1", 16) === 1;
 
     return (
         <div className="space-y-4">
-            {/* TX Overview */}
-            <Card className="bg-gray-900 border-gray-700">
-                <CardHeader className="pb-2">
-                    <div className="flex items-center gap-2">
-                        <CardTitle className="text-white text-sm font-mono">Transaction</CardTitle>
-                        <Badge variant={success ? "default" : "destructive"}>
-                            {success ? "✅ Success" : "❌ Reverted"}
-                        </Badge>
-                    </div>
-                </CardHeader>
-                <CardContent className="space-y-2 text-xs font-mono">
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                        <span className="text-gray-400">Hash</span>
-                        <span className="text-white break-all">{hash}</span>
-                        <span className="text-gray-400">Block</span>
-                        <span className="text-white">{tx?.blockNumber ? parseInt(tx.blockNumber, 16) : "—"}</span>
-                        <span className="text-gray-400">From</span>
-                        <span className="text-blue-300">{tx?.from ?? "—"}</span>
-                        <span className="text-gray-400">To</span>
-                        <span className="text-blue-300">{tx?.to ?? "Contract Creation"}</span>
-                        <span className="text-gray-400">Value</span>
-                        <span className="text-white">{tx?.value ? (Number(BigInt(tx.value)) / 1e18).toFixed(6) : "0"} ETH</span>
-                        <span className="text-gray-400">Gas Used</span>
-                        <span className="text-white">{receipt?.gasUsed ? parseInt(receipt.gasUsed, 16).toLocaleString() : "—"}</span>
-                    </div>
-                </CardContent>
-            </Card>
-
             {/* Tabs */}
             <Tabs defaultValue="debugger">
                 <TabsList className="bg-gray-800 border-gray-700">

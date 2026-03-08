@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useDevnetStore } from "@/store/useDevnetStore";
-import { AnvilControls } from "@/components/AnvilControls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +14,6 @@ import {
   Activity,
   Clock,
   ChevronRight,
-  Settings2,
   Zap,
   TrendingUp,
 } from "lucide-react";
@@ -53,32 +51,33 @@ const statusDot: Record<string, string> = {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { nodeStatus, latestBlock, chainId, port, transactions, setNodeStatus, setLatestBlock } =
-    useDevnetStore();
+  const {
+    nodeStatus, latestBlock, chainId, port, transactions,
+    setNodeStatus, setLatestBlock, setChainId, setPort, setNodeConfig,
+  } = useDevnetStore();
 
   const [query, setQuery] = useState("");
   const [gasPrice, setGasPrice] = useState<string>("—");
   const [blocks, setBlocks] = useState<BlockRow[]>([]);
-  const [showControls, setShowControls] = useState(false);
-  const controlsRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (controlsRef.current && !controlsRef.current.contains(e.target as Node)) {
-        setShowControls(false);
-      }
-    }
-    if (showControls) document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [showControls]);
 
   useEffect(() => {
     const poll = async () => {
       try {
         const s = await fetch("/api/anvil/status").then((r) => r.json());
         if (s.running) {
+          // Sync ALL running-Anvil state back into the store so a page
+          // refresh correctly reflects chain 204 (or whatever is running)
+          // rather than always showing the default 31337.
           setNodeStatus("running");
           setLatestBlock(s.blockNumber ?? 0);
+          if (s.chainId) setChainId(s.chainId);
+          if (s.port) setPort(s.port);
+          if (s.config) setNodeConfig(s.config);
+        } else {
+          // Don't override a "starting" status — Anvil may still be booting
+          if (useDevnetStore.getState().nodeStatus !== "starting") {
+            setNodeStatus("stopped");
+          }
         }
         const gp = await fetch("/api/rpc", {
           method: "POST",
@@ -112,7 +111,7 @@ export default function DashboardPage() {
     if (!q) return;
     if (q.startsWith("0x") && q.length === 66) return router.push(`/tx/${q}`);
     if (q.startsWith("0x") && q.length === 42) return router.push(`/accounts?address=${q}`);
-    if (/^\d+$/.test(q)) return router.push(`/blocks?number=${q}`);
+    if (/^\d+$/.test(q)) return router.push(`/blocks/${q}`);
     router.push(`/contracts?search=${q}`);
   };
 
@@ -122,7 +121,7 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-background">
 
       {/* ── Hero ── */}
-      <div className="relative overflow-hidden border-b border-border">
+      <div className="relative border-b border-border overflow-hidden">
         {/* Background grid + glow */}
         <div
           className="absolute inset-0 opacity-[0.03]"
@@ -134,8 +133,8 @@ export default function DashboardPage() {
         />
         <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[600px] h-[300px] rounded-full bg-primary/10 blur-[80px] pointer-events-none" />
 
-        <div className="relative max-w-5xl mx-auto px-4 py-10">
-          <div className="flex items-start justify-between gap-4">
+        <div className="relative max-w-5xl mx-auto px-4 py-8">
+          <div className="mb-5">
             {/* Title block */}
             <div>
               <div className="flex items-center gap-2.5 mb-1">
@@ -156,23 +155,6 @@ export default function DashboardPage() {
                   {port}
                 </span>
               </div>
-            </div>
-
-            {/* Node status + controls */}
-            <div className="relative flex-shrink-0" ref={controlsRef}>
-              <button
-                onClick={() => setShowControls((v) => !v)}
-                className="flex items-center gap-2 bg-card hover:bg-accent border border-border rounded-xl px-3.5 py-2 text-sm transition-all duration-150 shadow-sm"
-              >
-                <span className={`w-2 h-2 rounded-full ${statusDot[nodeStatus] ?? statusDot.stopped}`} />
-                <span className="text-foreground/80 font-mono text-xs capitalize tracking-wide">{nodeStatus}</span>
-                <Settings2 className="w-3.5 h-3.5 text-muted-foreground" />
-              </button>
-              {showControls && (
-                <div className="absolute right-0 top-11 z-50 w-80 shadow-2xl rounded-2xl overflow-hidden">
-                  <AnvilControls />
-                </div>
-              )}
             </div>
           </div>
 
@@ -196,39 +178,43 @@ export default function DashboardPage() {
 
       {/* ── Stats row ── */}
       <div className="border-b border-border bg-card/40 backdrop-blur-sm">
-        <div className="max-w-5xl mx-auto px-4 py-0 grid grid-cols-2 sm:grid-cols-4 divide-x divide-border">
-          {[
+        <div className="max-w-5xl mx-auto px-4 py-0 grid grid-cols-2 sm:grid-cols-4">
+          {([
             {
               icon: <Blocks className="w-4 h-4 text-primary" />,
               label: "Latest Block",
               value: latestBlock.toLocaleString(),
               color: "bg-primary/10",
+              border: "border-r border-border",
             },
             {
               icon: <ArrowRightLeft className="w-4 h-4 text-violet-400" />,
               label: "Transactions",
               value: transactions.length.toLocaleString(),
               color: "bg-violet-400/10",
+              border: "sm:border-r border-border",
             },
             {
               icon: <Fuel className="w-4 h-4 text-amber-400" />,
               label: "Gas Price",
               value: nodeStatus === "running" ? gasPrice : "—",
               color: "bg-amber-400/10",
+              border: "border-r border-t border-border sm:border-t-0",
             },
             {
               icon: <Activity className="w-4 h-4 text-emerald-400" />,
               label: "Node Status",
               value: null,
               color: "bg-emerald-400/10",
+              border: "border-t border-border sm:border-t-0",
             },
-          ].map((stat, i) => (
-            <div key={i} className="flex items-center gap-3 px-4 sm:px-6 py-4">
-              <div className={`p-2 rounded-lg ${stat.color} flex-shrink-0`}>
+          ] as const).map((stat, i) => (
+            <div key={i} className={`flex items-center gap-2.5 sm:gap-3 px-3 sm:px-6 py-4 ${stat.border}`}>
+              <div className={`p-1.5 sm:p-2 rounded-lg ${stat.color} flex-shrink-0`}>
                 {stat.icon}
               </div>
               <div className="min-w-0">
-                <div className="text-muted-foreground text-[10px] uppercase tracking-widest font-medium">{stat.label}</div>
+                <div className="text-muted-foreground text-[9px] sm:text-[10px] uppercase tracking-widest font-medium">{stat.label}</div>
                 {stat.value !== null ? (
                   <div className="text-foreground font-mono font-bold text-sm mt-0.5 truncate">{stat.value}</div>
                 ) : (
@@ -283,7 +269,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <Link
-                      href={`/blocks?number=${b.number}`}
+                      href={`/blocks/${b.number}`}
                       className="text-primary hover:underline font-mono text-sm font-bold"
                     >
                       #{b.number}
@@ -385,7 +371,7 @@ export default function DashboardPage() {
 
           <div className="border-t border-border bg-accent/20">
             <Link
-              href="/"
+              href="/transactions"
               className="flex items-center justify-center gap-1.5 text-primary hover:text-primary/80 text-xs font-semibold py-3 transition-colors"
             >
               View all transactions <ChevronRight className="w-3.5 h-3.5" />

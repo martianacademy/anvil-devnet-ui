@@ -4,9 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 
 export function EvmControls() {
     const [timeValue, setTimeValue] = useState("");
@@ -107,102 +105,84 @@ export function EvmControls() {
 
     return (
         <div className="space-y-4">
+
             {/* Time Travel */}
-            <Card className="bg-gray-900 border-gray-700">
-                <CardHeader className="pb-2">
-                    <CardTitle className="text-white text-sm">⏰ Time Travel</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-border/60 bg-muted/30">
+                    <span className="text-sm font-semibold text-foreground">⏰ Time Travel</span>
+                </div>
+                <div className="p-4 space-y-3">
                     <div className="flex flex-wrap gap-2">
-                        {[60, 3600, 86400, 604800, 2592000].map((s) => (
-                            <Button key={s} size="sm" variant="outline" onClick={() => increaseTime(s)} className="text-xs">
-                                +{s >= 86400 ? `${s / 86400}d` : s >= 3600 ? `${s / 3600}h` : "1min"}
+                        {[[60, "1min"], [3600, "1h"], [86400, "1d"], [604800, "7d"], [2592000, "30d"]].map(([s, label]) => (
+                            <Button key={s} size="sm" variant="outline" onClick={() => increaseTime(s as number)} className="text-xs">
+                                +{label}
                             </Button>
                         ))}
                     </div>
                     <div className="flex gap-2">
-                        <Input
-                            className="h-8 bg-gray-800 border-gray-600 text-white text-xs font-mono"
-                            placeholder="seconds"
-                            value={timeValue}
-                            onChange={(e) => setTimeValue(e.target.value)}
-                        />
-                        <Button size="sm" onClick={() => increaseTime(parseInt(timeValue || "0"))}>
-                            +Increase
-                        </Button>
+                        <Input className="h-9 text-sm" placeholder="seconds" value={timeValue} onChange={(e) => setTimeValue(e.target.value)} />
+                        <Button size="sm" onClick={() => increaseTime(parseInt(timeValue || "0"))}>+Custom</Button>
                     </div>
-                </CardContent>
-            </Card>
+                </div>
+            </div>
 
             {/* Mining */}
-            <Card className="bg-gray-900 border-gray-700">
-                <CardHeader className="pb-2">
-                    <CardTitle className="text-white text-sm">⛏ Mining</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                    <div className="flex gap-2 flex-wrap">
-                        <Button size="sm" variant="outline" onClick={() => toggleAutomine(!automine)}>
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-border/60 bg-muted/30">
+                    <span className="text-sm font-semibold text-foreground">⛏ Mining</span>
+                </div>
+                <div className="p-4 space-y-3">
+                    <div className="flex gap-2 flex-wrap items-center">
+                        <Button size="sm" variant="outline" onClick={() => toggleAutomine(!automine)} className="text-xs">
                             {automine ? "⏸ Pause Auto" : "▶ Enable Auto"}
                         </Button>
                         {[1, 5, 10].map((n) => (
-                            <Button key={n} size="sm" variant="outline" onClick={() => mine(n)} className="text-xs">
-                                Mine {n}
-                            </Button>
+                            <Button key={n} size="sm" variant="outline" onClick={() => mine(n)} className="text-xs">Mine {n}</Button>
                         ))}
-                        <Input
-                            className="h-8 w-24 bg-gray-800 border-gray-600 text-white text-xs"
-                            value={blocks}
-                            onChange={(e) => setBlocks(e.target.value)}
-                        />
+                        <Input className="h-9 w-24 text-sm" value={blocks} onChange={(e) => setBlocks(e.target.value)} />
                         <Button size="sm" onClick={() => mine(parseInt(blocks))}>Mine N</Button>
                     </div>
-                </CardContent>
-            </Card>
+                </div>
+            </div>
 
             {/* Impersonation */}
-            <Card className="bg-gray-900 border-gray-700">
-                <CardHeader className="pb-2">
-                    <CardTitle className="text-white text-sm">🎭 Impersonation</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-border/60 bg-muted/30">
+                    <span className="text-sm font-semibold text-foreground">🎭 Impersonation</span>
+                </div>
+                <div className="p-4">
                     {activeImpersonation ? (
-                        <div className="flex items-center gap-2">
-                            <Badge className="bg-orange-700 text-white font-mono text-xs">
+                        <div className="flex items-center gap-3">
+                            <Badge className="bg-orange-500/20 text-orange-400 border border-orange-500/30 font-mono text-xs">
                                 Active: {activeImpersonation.slice(0, 10)}…
                             </Badge>
                             <Button size="sm" variant="destructive" onClick={stopImpersonate}>Stop</Button>
                         </div>
                     ) : (
                         <div className="flex gap-2">
-                            <Input
-                                className="h-8 font-mono bg-gray-800 border-gray-600 text-white text-xs"
-                                placeholder="0x... address to impersonate"
-                                value={impersonateAddr}
-                                onChange={(e) => setImpersonateAddr(e.target.value)}
-                            />
-                            <Button size="sm" onClick={startImpersonate} disabled={!impersonateAddr}>
-                                Start
-                            </Button>
+                            <Input className="h-9 font-mono text-sm flex-1" placeholder="0x... address to impersonate" value={impersonateAddr} onChange={(e) => setImpersonateAddr(e.target.value)} />
+                            <Button size="sm" onClick={startImpersonate} disabled={!impersonateAddr}>Start</Button>
                         </div>
                     )}
-                </CardContent>
-            </Card>
+                </div>
+            </div>
 
-            {/* Zero Gas */}
-            <Card className="bg-gray-900 border-gray-700">
-                <CardHeader className="pb-2">
-                    <CardTitle className="text-white text-sm">⛽ Gas Controls</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <Button size="sm" variant="outline" onClick={setZeroGas}>
-                        Zero Gas Mode
-                    </Button>
-                    <p className="text-gray-500 text-xs mt-1">Sets base fee + min gas to 0</p>
-                </CardContent>
-            </Card>
+            {/* Gas Controls */}
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-border/60 bg-muted/30">
+                    <span className="text-sm font-semibold text-foreground">⛽ Gas Controls</span>
+                </div>
+                <div className="p-4 space-y-2">
+                    <Button size="sm" variant="outline" onClick={setZeroGas}>Zero Gas Mode</Button>
+                    <p className="text-muted-foreground text-xs">Sets base fee + min gas to 0</p>
+                </div>
+            </div>
 
             {status && (
-                <p className="text-green-400 text-xs font-mono">{status}</p>
+                <div className={`rounded-lg px-3 py-2 text-xs font-mono border ${status.startsWith("Error")
+                    ? "bg-red-500/10 border-red-500/30 text-red-400"
+                    : "bg-green-500/10 border-green-500/30 text-green-400"
+                    }`}>{status}</div>
             )}
         </div>
     );

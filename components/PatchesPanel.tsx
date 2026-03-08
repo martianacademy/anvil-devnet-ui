@@ -4,8 +4,6 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function PatchesPanel() {
@@ -61,92 +59,98 @@ export function PatchesPanel() {
     };
 
     return (
-        <div className="space-y-4">
-            <Tabs defaultValue="native">
-                <TabsList className="bg-gray-800">
-                    <TabsTrigger value="native" className="text-xs">Fund Native</TabsTrigger>
-                    <TabsTrigger value="erc20" className="text-xs">Fund ERC20</TabsTrigger>
-                    <TabsTrigger value="storage" className="text-xs">Storage Patch</TabsTrigger>
-                </TabsList>
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+            <div className="px-5 py-4 border-b border-border/60 bg-muted/30">
+                <span className="text-sm font-semibold text-foreground">Patch Tools</span>
+            </div>
+            <div className="p-4 space-y-4">
+                <Tabs defaultValue="native">
+                    <TabsList className="w-full">
+                        <TabsTrigger value="native" className="flex-1 text-xs">Fund Native</TabsTrigger>
+                        <TabsTrigger value="erc20" className="flex-1 text-xs">Fund ERC20</TabsTrigger>
+                        <TabsTrigger value="storage" className="flex-1 text-xs">Storage Patch</TabsTrigger>
+                    </TabsList>
 
-                <TabsContent value="native">
-                    <Card className="bg-gray-900 border-gray-700">
-                        <CardContent className="pt-4 space-y-3">
-                            <div>
-                                <Label className="text-gray-400 text-xs">Wallet Address</Label>
-                                <Input className="h-8 font-mono bg-gray-800 border-gray-600 text-white text-xs"
+                    <TabsContent value="native" className="mt-4">
+                        <div className="space-y-3">
+                            <div className="space-y-1.5">
+                                <Label className="text-muted-foreground text-xs">Wallet Address</Label>
+                                <Input className="h-9 font-mono text-sm"
                                     placeholder="0x..." value={nativeAddr} onChange={(e) => setNativeAddr(e.target.value)} />
                             </div>
-                            <div>
-                                <Label className="text-gray-400 text-xs">Amount (ETH)</Label>
-                                <Input className="h-8 bg-gray-800 border-gray-600 text-white text-xs"
+                            <div className="space-y-1.5">
+                                <Label className="text-muted-foreground text-xs">Amount (ETH)</Label>
+                                <Input className="h-9 text-sm"
                                     value={nativeAmount} onChange={(e) => setNativeAmount(e.target.value)} />
                             </div>
-                            <Button size="sm" onClick={() => fund("native")}>Fund Native</Button>
-                        </CardContent>
-                    </Card>
-                </TabsContent>
+                            <Button size="sm" onClick={() => fund("native")} className="w-full sm:w-auto">Fund Native</Button>
+                        </div>
+                    </TabsContent>
 
-                <TabsContent value="erc20">
-                    <Card className="bg-gray-900 border-gray-700">
-                        <CardContent className="pt-4 space-y-3">
-                            <div>
-                                <Label className="text-gray-400 text-xs">Token Address</Label>
-                                <Input className="h-8 font-mono bg-gray-800 border-gray-600 text-white text-xs"
+                    <TabsContent value="erc20" className="mt-4">
+                        <div className="space-y-3">
+                            <div className="space-y-1.5">
+                                <Label className="text-muted-foreground text-xs">Token Address</Label>
+                                <Input className="h-9 font-mono text-sm"
                                     placeholder="0x..." value={erc20Token} onChange={(e) => setErc20Token(e.target.value)} />
                             </div>
-                            <div>
-                                <Label className="text-gray-400 text-xs">Wallet Address</Label>
-                                <Input className="h-8 font-mono bg-gray-800 border-gray-600 text-white text-xs"
+                            <div className="space-y-1.5">
+                                <Label className="text-muted-foreground text-xs">Wallet Address</Label>
+                                <Input className="h-9 font-mono text-sm"
                                     placeholder="0x..." value={erc20Wallet} onChange={(e) => setErc20Wallet(e.target.value)} />
                             </div>
-                            <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                    <Label className="text-gray-400 text-xs">Amount (human)</Label>
-                                    <Input className="h-8 bg-gray-800 border-gray-600 text-white text-xs"
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1.5">
+                                    <Label className="text-muted-foreground text-xs">Amount</Label>
+                                    <Input className="h-9 text-sm"
                                         value={erc20Amount} onChange={(e) => setErc20Amount(e.target.value)} />
                                 </div>
-                                <div>
-                                    <Label className="text-gray-400 text-xs">Decimals</Label>
-                                    <Input className="h-8 bg-gray-800 border-gray-600 text-white text-xs"
+                                <div className="space-y-1.5">
+                                    <Label className="text-muted-foreground text-xs">Decimals</Label>
+                                    <Input className="h-9 text-sm"
                                         value={erc20Decimals} onChange={(e) => setErc20Decimals(e.target.value)} />
                                 </div>
                             </div>
-                            <Button size="sm" onClick={() => fund("erc20")}>Fund ERC20</Button>
-                        </CardContent>
-                    </Card>
-                </TabsContent>
+                            <Button size="sm" onClick={() => fund("erc20")} className="w-full sm:w-auto">Fund ERC20</Button>
+                        </div>
+                    </TabsContent>
 
-                <TabsContent value="storage">
-                    <Card className="bg-gray-900 border-gray-700">
-                        <CardContent className="pt-4 space-y-3">
-                            <div>
-                                <Label className="text-gray-400 text-xs">Contract Address</Label>
-                                <Input className="h-8 font-mono bg-gray-800 border-gray-600 text-white text-xs"
+                    <TabsContent value="storage" className="mt-4">
+                        <div className="space-y-3">
+                            <div className="space-y-1.5">
+                                <Label className="text-muted-foreground text-xs">Contract Address</Label>
+                                <Input className="h-9 font-mono text-sm"
                                     placeholder="0x..." value={storageContract} onChange={(e) => setStorageContract(e.target.value)} />
                             </div>
-                            <div>
-                                <Label className="text-gray-400 text-xs">Slot (hex)</Label>
-                                <Input className="h-8 font-mono bg-gray-800 border-gray-600 text-white text-xs"
+                            <div className="space-y-1.5">
+                                <Label className="text-muted-foreground text-xs">Slot (hex)</Label>
+                                <Input className="h-9 font-mono text-sm"
                                     placeholder="0x0" value={storageSlot}
                                     onChange={(e) => setStorageSlot(e.target.value)}
                                     onBlur={readSlot} />
                             </div>
                             {currentSlotValue && (
-                                <p className="text-gray-400 text-xs font-mono">Current: {currentSlotValue}</p>
+                                <div className="rounded-lg bg-muted/50 border border-border px-3 py-2">
+                                    <p className="text-muted-foreground text-xs font-mono">Current: <span className="text-foreground">{currentSlotValue}</span></p>
+                                </div>
                             )}
-                            <div>
-                                <Label className="text-gray-400 text-xs">New Value (hex)</Label>
-                                <Input className="h-8 font-mono bg-gray-800 border-gray-600 text-white text-xs"
+                            <div className="space-y-1.5">
+                                <Label className="text-muted-foreground text-xs">New Value (hex)</Label>
+                                <Input className="h-9 font-mono text-sm"
                                     placeholder="0x0" value={storageValue} onChange={(e) => setStorageValue(e.target.value)} />
                             </div>
-                            <Button size="sm" onClick={writeSlot}>Write Slot</Button>
-                        </CardContent>
-                    </Card>
-                </TabsContent>
-            </Tabs>
+                            <Button size="sm" onClick={writeSlot} className="w-full sm:w-auto">Write Slot</Button>
+                        </div>
+                    </TabsContent>
+                </Tabs>
 
-            {status && <p className="text-green-400 text-xs font-mono">{status}</p>}
+                {status && (
+                    <div className={`rounded-lg px-3 py-2 text-xs font-mono border ${status.startsWith("Error")
+                        ? "bg-red-500/10 border-red-500/30 text-red-400"
+                        : "bg-green-500/10 border-green-500/30 text-green-400"
+                        }`}>{status}</div>
+                )}
+            </div>
         </div>
     );
 }

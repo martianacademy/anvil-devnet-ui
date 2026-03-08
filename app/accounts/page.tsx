@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,71 +51,77 @@ export default function AccountsPage() {
     };
 
     return (
-        <div className="p-4 max-w-7xl mx-auto space-y-4">
-            <h1 className="text-white text-lg font-mono font-bold">Accounts</h1>
+        <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-5">
+            <div>
+                <h1 className="text-xl font-semibold text-foreground">Accounts</h1>
+                <p className="text-muted-foreground text-xs mt-0.5">{accounts.length} account{accounts.length !== 1 ? "s" : ""} loaded</p>
+            </div>
 
-            <Card className="bg-gray-900 border-gray-700">
-                <CardHeader className="pb-2">
-                    <CardTitle className="text-white text-sm font-mono">Fund Account</CardTitle>
-                </CardHeader>
-                <CardContent className="flex gap-2 items-end flex-wrap">
-                    <div className="space-y-1 flex-1 min-w-[240px]">
-                        <Label className="text-gray-400 text-xs font-mono">Address</Label>
-                        <Input
-                            className="bg-gray-950 border-gray-700 text-white font-mono text-xs"
-                            placeholder="0x..."
-                            value={fundAddr}
-                            onChange={(e) => setFundAddr(e.target.value)}
-                        />
+            {/* Fund card */}
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+                <div className="px-5 py-4 border-b border-border/60 bg-muted/30">
+                    <span className="text-sm font-semibold text-foreground">Fund Account</span>
+                </div>
+                <div className="p-4">
+                    <div className="flex gap-3 items-end flex-wrap">
+                        <div className="space-y-1.5 flex-1 min-w-[220px]">
+                            <Label className="text-muted-foreground text-xs">Address</Label>
+                            <Input className="h-9 font-mono text-sm" placeholder="0x..." value={fundAddr} onChange={(e) => setFundAddr(e.target.value)} />
+                        </div>
+                        <div className="space-y-1.5 w-28">
+                            <Label className="text-muted-foreground text-xs">ETH Amount</Label>
+                            <Input className="h-9 text-sm" value={fundAmt} onChange={(e) => setFundAmt(e.target.value)} />
+                        </div>
+                        <Button onClick={fund} disabled={funding || !fundAddr} size="sm">
+                            {funding ? "Funding…" : "Fund"}
+                        </Button>
                     </div>
-                    <div className="space-y-1 w-28">
-                        <Label className="text-gray-400 text-xs font-mono">ETH Amount</Label>
-                        <Input
-                            className="bg-gray-950 border-gray-700 text-white font-mono text-xs"
-                            value={fundAmt}
-                            onChange={(e) => setFundAmt(e.target.value)}
-                        />
-                    </div>
-                    <Button onClick={fund} disabled={funding || !fundAddr} className="font-mono text-xs">
-                        {funding ? "Funding…" : "Fund"}
-                    </Button>
-                    {msg && <span className="text-xs font-mono text-green-400">{msg}</span>}
-                </CardContent>
-            </Card>
+                    {msg && (
+                        <div className={`mt-3 rounded-lg px-3 py-2 text-xs font-mono border ${msg.toLowerCase().includes("error") || msg.toLowerCase().includes("fail")
+                            ? "bg-red-500/10 border-red-500/30 text-red-400"
+                            : "bg-green-500/10 border-green-500/30 text-green-400"
+                            }`}>{msg}</div>
+                    )}
+                </div>
+            </div>
 
-            <Card className="bg-gray-950 border-gray-800">
-                <CardHeader className="pb-2">
-                    <CardTitle className="text-white text-sm font-mono">All Accounts</CardTitle>
-                </CardHeader>
-                <CardContent>
+            {/* Accounts table */}
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+                <div className="px-5 py-4 border-b border-border/60 bg-muted/30 flex items-center justify-between">
+                    <span className="text-sm font-semibold text-foreground">All Accounts</span>
+                    <Badge variant="secondary" className="text-xs">{accounts.length}</Badge>
+                </div>
+                <div className="overflow-x-auto">
                     {loading ? (
-                        <p className="text-gray-500 text-xs font-mono">Loading…</p>
+                        <p className="p-5 text-muted-foreground text-sm">Loading…</p>
                     ) : accounts.length === 0 ? (
-                        <p className="text-gray-500 text-xs font-mono">No accounts found. Start anvil first.</p>
+                        <p className="p-5 text-muted-foreground text-sm">No accounts found. Start Anvil first.</p>
                     ) : (
                         <table className="w-full text-xs font-mono">
                             <thead>
-                                <tr className="text-gray-400 border-b border-gray-800">
-                                    <th className="text-left py-1 pr-4">Address</th>
-                                    <th className="text-left py-1 pr-4">Balance (ETH)</th>
-                                    <th className="text-left py-1">Nonce</th>
+                                <tr className="text-muted-foreground border-b border-border/60 bg-muted/20">
+                                    <th className="text-left px-5 py-2.5 font-medium">#</th>
+                                    <th className="text-left px-4 py-2.5 font-medium">Address</th>
+                                    <th className="text-left px-4 py-2.5 font-medium">Balance (ETH)</th>
+                                    <th className="text-left px-4 py-2.5 font-medium">Nonce</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {accounts.map((acc) => (
-                                    <tr key={acc.address} className="border-b border-gray-900 hover:bg-gray-900">
-                                        <td className="py-1 pr-4 text-green-400">{acc.address}</td>
-                                        <td className="py-1 pr-4 text-white">
+                                {accounts.map((acc, i) => (
+                                    <tr key={acc.address} className="border-b border-border/30 last:border-0 hover:bg-muted/30 transition-colors">
+                                        <td className="px-5 py-2.5 text-muted-foreground">{i}</td>
+                                        <td className="px-4 py-2.5 text-green-400">{acc.address}</td>
+                                        <td className="px-4 py-2.5 text-foreground font-semibold">
                                             {acc.balance ? formatEther(BigInt(acc.balance.toString())) : "0"}
                                         </td>
-                                        <td className="py-1 text-gray-400">{acc.nonce ?? 0}</td>
+                                        <td className="px-4 py-2.5 text-muted-foreground">{acc.nonce ?? 0}</td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
                     )}
-                </CardContent>
-            </Card>
+                </div>
+            </div>
         </div>
     );
 }

@@ -46,8 +46,36 @@ function formatGas(hex: string | null): string {
 }
 
 export function TxList() {
-    const { transactions, nodeStatus, addTransactions, setLatestBlock } = useDevnetStore();
+    const { transactions, nodeStatus, addTransactions, setLatestBlock, chainId } = useDevnetStore();
     const eventSourceRef = useRef<EventSource | null>(null);
+
+    // Hydrate from DB whenever node starts (or on initial mount if already running).
+    // This ensures transactions recorded in previous sessions / browser tabs are visible
+    // immediately rather than only appearing via the live SSE stream.
+    useEffect(() => {
+        if (nodeStatus !== "running") return;
+        fetch(`/api/explorer?module=tx&action=getrecentlist&limit=200`)
+            .then((r) => r.json())
+            .then((d) => {
+                if (Array.isArray(d.result)) {
+                    addTransactions(
+                        (d.result as any[]).map((tx) => ({
+                            hash: tx.hash,
+                            block_number: tx.block_number,
+                            block_timestamp: tx.block_timestamp,
+                            from_address: tx.from_address,
+                            to_address: tx.to_address,
+                            value: tx.value,
+                            gas_used: tx.gas_used,
+                            status: tx.status,
+                            decoded_function: tx.decoded_function,
+                            input: tx.input,
+                        }))
+                    );
+                }
+            })
+            .catch(() => { });
+    }, [nodeStatus, chainId]);
 
     useEffect(() => {
         if (nodeStatus !== "running") return;

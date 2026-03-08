@@ -2,9 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface Profile {
     id: number;
@@ -54,44 +52,57 @@ export function ChainProfileSelector() {
     };
 
     return (
-        <Card className="bg-gray-900 border-gray-700">
-            <CardHeader className="pb-2">
-                <CardTitle className="text-white text-sm">Chain Profiles</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-                <div className="flex gap-2 flex-wrap">
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+            <div className="px-5 py-4 border-b border-border/60 bg-muted/30">
+                <span className="text-sm font-semibold text-foreground">Chain Profiles</span>
+            </div>
+            <div className="p-4 space-y-4">
+                <div className="flex flex-col gap-2">
+                    <p className="text-muted-foreground text-xs">Quick presets</p>
                     {["BSC Mainnet Fork", "opBNB Fork", "ETH Mainnet Fork", "Local Clean"].map((name) => (
                         <Button
                             key={name}
                             size="sm"
                             variant="outline"
-                            className="text-xs"
+                            className="w-full justify-start text-xs h-8"
                             onClick={() => loadPreset(name)}
                         >
                             {name}
                         </Button>
                     ))}
                 </div>
+
                 {profiles.length > 0 && (
                     <div className="space-y-1">
+                        <p className="text-muted-foreground text-xs">Saved profiles</p>
                         {profiles.map((p) => (
-                            <div key={p.id} className="flex items-center gap-2 text-xs">
+                            <div key={p.id} className="flex items-center gap-2 py-1.5 border-b border-border/30 last:border-0">
                                 {p.is_active ? (
-                                    <Badge className="bg-green-700 text-xs">active</Badge>
+                                    <Badge className="bg-green-500/20 text-green-400 border border-green-500/30 text-[10px] px-1.5">active</Badge>
                                 ) : (
-                                    <Button size="sm" variant="ghost" className="h-5 text-xs px-1" onClick={() => activate(p.name)}>
+                                    <button
+                                        className="text-[10px] text-primary border border-primary/30 rounded px-1.5 py-0.5 hover:bg-primary/10 transition-colors"
+                                        onClick={() => activate(p.name)}
+                                    >
                                         Use
-                                    </Button>
+                                    </button>
                                 )}
-                                <span className="text-white">{p.name}</span>
-                                <span className="text-gray-400">Chain {p.chainId}</span>
-                                {p.forkUrl && <span className="text-blue-300 truncate max-w-[150px]">{p.forkUrl}</span>}
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-xs text-foreground truncate">{p.name}</p>
+                                    <p className="text-[10px] text-muted-foreground">Chain {p.chainId}</p>
+                                </div>
                             </div>
                         ))}
                     </div>
                 )}
-                {status && <p className="text-green-400 text-xs">{status}</p>}
-            </CardContent>
-        </Card>
+
+                {status && (
+                    <div className={`rounded-lg px-3 py-2 text-xs font-mono border ${status.startsWith("Error")
+                        ? "bg-red-500/10 border-red-500/30 text-red-400"
+                        : "bg-green-500/10 border-green-500/30 text-green-400"
+                        }`}>{status}</div>
+                )}
+            </div>
+        </div>
     );
 }

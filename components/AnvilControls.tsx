@@ -50,10 +50,25 @@ const DEFAULT_CONFIG = {
 };
 
 export function AnvilControls() {
-    const { nodeStatus, setNodeStatus, setNodeConfig, setPort, setChainId, saveChainSnapshot } =
+    const { nodeStatus, nodeConfig, setNodeStatus, setNodeConfig, setPort, setChainId, saveChainSnapshot } =
         useDevnetStore();
 
-    const [config, setConfig] = useState(DEFAULT_CONFIG);
+    // Init from stored nodeConfig so chain selection survives dropdown close/reopen
+    const [config, setConfig] = useState(() => {
+        const nc = useDevnetStore.getState().nodeConfig;
+        const cid = nc.chainId ?? DEFAULT_CHAIN_ID;
+        return {
+            chainId: cid,
+            port: nc.port ?? 8545,
+            blockTime: nc.blockTime ?? 2,
+            accounts: nc.accounts ?? 10,
+            balance: nc.balance ?? 10000,
+            baseFee: nc.baseFee ?? 0,
+            stepsTracing: nc.stepsTracing ?? true,
+            persistState: nc.persistState ?? true,
+            stateFile: nc.stateFile ?? `/tmp/anvil-state-${cid}.json`,
+        };
+    });
     const [showConfig, setShowConfig] = useState(false);
     const [forkUrl, setForkUrl] = useState("");
     const [forkBlock, setForkBlock] = useState("");
@@ -84,7 +99,10 @@ export function AnvilControls() {
     const otherChains = useMemo(() => allChains.filter((c) => !pinnedIds.has(c.chainId)), [allChains, pinnedIds]);
 
     const applyChainId = (cid: number) => {
-        setConfig((prev) => ({ ...prev, chainId: cid, stateFile: `/tmp/anvil-state-${cid}.json` }));
+        const updated = { ...config, chainId: cid, stateFile: `/tmp/anvil-state-${cid}.json` };
+        setConfig(updated);
+        // Persist to store immediately so it survives dropdown close/reopen
+        setNodeConfig({ chainId: cid, stateFile: updated.stateFile });
         setIsCustom(false);
         setChainOpen(false);
     };

@@ -45,7 +45,9 @@ export async function GET() {
 
                     if (currentBlock <= lastBlock) return;
 
-                    const from = lastBlock === -1 ? currentBlock : lastBlock + 1;
+                    // On first connect start from block 0 so all historical
+                    // blocks (and their transactions) are replayed into the DB.
+                    const from = lastBlock === -1 ? 0 : lastBlock + 1;
 
                     for (let bn = from; bn <= currentBlock; bn++) {
                         const blockRes = await fetch(`http://127.0.0.1:${port}`, {

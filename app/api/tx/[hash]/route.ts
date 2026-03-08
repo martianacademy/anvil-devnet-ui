@@ -9,9 +9,24 @@ export async function GET(
     try {
         const { hash } = await params;
 
-        // Check SQLite first
+        // Check SQLite first — normalize to flat camelCase shape
         const cached = getTxByHash(hash);
-        if (cached) return NextResponse.json(cached);
+        if (cached) {
+            return NextResponse.json({
+                hash: cached.hash,
+                from: cached.from_address,
+                to: cached.to_address ?? null,
+                blockNumber: cached.block_number,
+                gas: cached.gas,
+                gasUsed: cached.gas_used,
+                value: cached.value,
+                input: cached.input,
+                nonce: cached.nonce,
+                status: cached.status === 1 ? "success" : "failed",
+                decoded_function: cached.decoded_function,
+                receipt: null,
+            });
+        }
 
         // Fetch live from anvil
         const port = getAnvilState().config?.port ?? 8545;
@@ -27,9 +42,23 @@ export async function GET(
             jsonRpc("eth_getTransactionReceipt", [hash]),
         ]);
 
+        const t = txRes.result;
+        const r = rcptRes.result;
+        if (!t) return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+
         return NextResponse.json({
-            tx: txRes.result,
-            receipt: rcptRes.result,
+            hash: t.hash,
+            from: t.from,
+            to: t.to ?? null,
+            blockNumber: t.blockNumber ? parseInt(t.blockNumber, 16) : null,
+            gas: t.gas,
+            gasUsed: r?.gasUsed ?? null,
+            value: t.value,
+            input: t.input,
+            nonce: t.nonce ? parseInt(t.nonce, 16) : null,
+            status: r ? (parseInt(r.status, 16) === 1 ? "success" : "failed") : "unknown",
+            decoded_function: null,
+            receipt: r ?? null,
         });
     } catch (err: any) {
         return NextResponse.json({ error: err.message }, { status: 500 });
