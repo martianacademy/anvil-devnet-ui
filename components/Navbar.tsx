@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRef, useState, useEffect } from "react";
-import { Menu, Settings2, Zap } from "lucide-react";
+import { Menu, Settings2, Zap, Github } from "lucide-react";
 import { useDevnetStore } from "@/store/useDevnetStore";
 import { AnvilControls } from "@/components/AnvilControls";
 import {
@@ -167,6 +167,16 @@ export function Navbar() {
                 {/* Spacer */}
                 <div className="flex-1" />
 
+                {/* GitHub link — desktop */}
+                <a
+                    href="https://github.com/martianacademy/anvil-devnet-ui"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hidden sm:flex items-center justify-center w-8 h-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                >
+                    <Github className="w-4 h-4" />
+                </a>
+
                 {/* Live chain info — desktop only */}
                 {nodeStatus === "running" && (
                     <div className="hidden sm:flex items-center gap-3 text-[11px] font-mono text-muted-foreground">
@@ -233,6 +243,17 @@ export function Navbar() {
                                 <div>Port <span className="text-primary font-semibold">{port}</span></div>
                             </div>
                         )}
+                        <div className="mx-4 mt-4 pt-4 border-t border-border">
+                            <a
+                                href="https://github.com/martianacademy/anvil-devnet-ui"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors py-1"
+                            >
+                                <Github className="w-4 h-4" />
+                                View on GitHub
+                            </a>
+                        </div>
                     </SheetContent>
                 </Sheet>
 

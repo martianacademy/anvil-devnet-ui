@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Navbar } from "@/components/Navbar";
+import { Footer } from "@/components/Footer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 const geistMono = Geist_Mono({
@@ -25,6 +26,7 @@ export default function RootLayout({
         <TooltipProvider>
           <Navbar />
           <main>{children}</main>
+          <Footer />
         </TooltipProvider>
       </body>
     </html>
