@@ -16,6 +16,8 @@ import {
   Clock,
   ChevronRight,
   Settings2,
+  Zap,
+  TrendingUp,
 } from "lucide-react";
 import Link from "next/link";
 import { formatEther } from "viem";
@@ -29,9 +31,9 @@ function truncate(s: string, n = 16) {
 function timeAgo(ts: number) {
   const diff = Math.floor(Date.now() / 1000) - ts;
   if (diff < 5) return "just now";
-  if (diff < 60) return `${diff} secs ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)} mins ago`;
-  return `${Math.floor(diff / 3600)} hrs ago`;
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  return `${Math.floor(diff / 3600)}h ago`;
 }
 
 interface BlockRow {
@@ -41,6 +43,13 @@ interface BlockRow {
   txCount: number;
   gasUsed: string;
 }
+
+const statusDot: Record<string, string> = {
+  running: "bg-green-400 shadow-[0_0_8px_2px_rgba(74,222,128,0.6)] animate-pulse",
+  starting: "bg-yellow-400 shadow-[0_0_8px_2px_rgba(250,204,21,0.6)] animate-pulse",
+  error: "bg-red-500 shadow-[0_0_8px_2px_rgba(239,68,68,0.6)]",
+  stopped: "bg-muted-foreground/40",
+};
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -53,7 +62,6 @@ export default function DashboardPage() {
   const [showControls, setShowControls] = useState(false);
   const controlsRef = useRef<HTMLDivElement>(null);
 
-  // close controls panel on outside click
   useEffect(() => {
     function handler(e: MouseEvent) {
       if (controlsRef.current && !controlsRef.current.contains(e.target as Node)) {
@@ -64,7 +72,6 @@ export default function DashboardPage() {
     return () => document.removeEventListener("mousedown", handler);
   }, [showControls]);
 
-  // poll status every 2 s
   useEffect(() => {
     const poll = async () => {
       try {
@@ -89,12 +96,8 @@ export default function DashboardPage() {
     return () => clearInterval(id);
   }, []);
 
-  // clear local block cache when chain changes
-  useEffect(() => {
-    setBlocks([]);
-  }, [chainId]);
+  useEffect(() => { setBlocks([]); }, [chainId]);
 
-  // load blocks
   useEffect(() => {
     if (nodeStatus !== "running") return;
     fetch("/api/explorer?module=block&action=getblocklist&page=1&offset=6")
@@ -116,48 +119,57 @@ export default function DashboardPage() {
   const recentTxs = transactions.slice(0, 6);
 
   return (
-    <div className="min-h-screen bg-gray-950">
+    <div className="min-h-screen bg-background">
+
       {/* ── Hero ── */}
-      <div
-        className="relative bg-gradient-to-br from-gray-900 via-gray-950 to-black border-b border-gray-800"
-        style={{ backgroundImage: "radial-gradient(ellipse at 60% 40%, rgba(59,130,246,0.06) 0%, transparent 70%)" }}
-      >
-        <div className="max-w-5xl mx-auto px-4 py-10">
-          <div className="flex items-center justify-between mb-1">
+      <div className="relative overflow-hidden border-b border-border">
+        {/* Background grid + glow */}
+        <div
+          className="absolute inset-0 opacity-[0.03]"
+          style={{
+            backgroundImage: `linear-gradient(var(--color-border,#333) 1px, transparent 1px),
+              linear-gradient(90deg, var(--color-border,#333) 1px, transparent 1px)`,
+            backgroundSize: "40px 40px",
+          }}
+        />
+        <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[600px] h-[300px] rounded-full bg-primary/10 blur-[80px] pointer-events-none" />
+
+        <div className="relative max-w-5xl mx-auto px-4 py-10">
+          <div className="flex items-start justify-between gap-4">
+            {/* Title block */}
             <div>
-              <h1 className="text-white text-2xl font-bold tracking-tight">
-                Anvil DevNet Explorer
-              </h1>
-              <p className="text-gray-400 text-sm mt-0.5">
-                Chain ID{" "}
-                <span className="text-blue-400 font-mono font-semibold">{chainId}</span>
-                {" · "}Port{" "}
-                <span className="text-blue-400 font-mono font-semibold">{port}</span>
-              </p>
+              <div className="flex items-center gap-2.5 mb-1">
+                <div className="p-1.5 rounded-lg bg-primary/15 border border-primary/20">
+                  <Zap className="w-4 h-4 text-primary" />
+                </div>
+                <h1 className="text-foreground text-2xl font-bold tracking-tight">
+                  Anvil DevNet Explorer
+                </h1>
+              </div>
+              <div className="flex items-center gap-2 ml-10 flex-wrap">
+                <span className="inline-flex items-center gap-1.5 bg-accent/60 border border-border text-xs font-mono px-2 py-0.5 rounded-full text-primary">
+                  <span className="text-muted-foreground">Chain</span>
+                  {chainId}
+                </span>
+                <span className="inline-flex items-center gap-1.5 bg-accent/60 border border-border text-xs font-mono px-2 py-0.5 rounded-full text-primary">
+                  <span className="text-muted-foreground">Port</span>
+                  {port}
+                </span>
+              </div>
             </div>
 
-            {/* Node status + controls toggle */}
-            <div className="relative" ref={controlsRef}>
+            {/* Node status + controls */}
+            <div className="relative flex-shrink-0" ref={controlsRef}>
               <button
                 onClick={() => setShowControls((v) => !v)}
-                className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-2 text-sm transition-colors"
+                className="flex items-center gap-2 bg-card hover:bg-accent border border-border rounded-xl px-3.5 py-2 text-sm transition-all duration-150 shadow-sm"
               >
-                <span
-                  className={`w-2 h-2 rounded-full ${nodeStatus === "running"
-                    ? "bg-green-400 animate-pulse"
-                    : nodeStatus === "starting"
-                      ? "bg-yellow-400 animate-pulse"
-                      : nodeStatus === "error"
-                        ? "bg-red-400"
-                        : "bg-gray-500"
-                    }`}
-                />
-                <span className="text-gray-200 font-mono text-xs capitalize">{nodeStatus}</span>
-                <Settings2 className="w-3.5 h-3.5 text-gray-400" />
+                <span className={`w-2 h-2 rounded-full ${statusDot[nodeStatus] ?? statusDot.stopped}`} />
+                <span className="text-foreground/80 font-mono text-xs capitalize tracking-wide">{nodeStatus}</span>
+                <Settings2 className="w-3.5 h-3.5 text-muted-foreground" />
               </button>
-
               {showControls && (
-                <div className="absolute right-0 top-10 z-50 w-80 shadow-2xl">
+                <div className="absolute right-0 top-11 z-50 w-80 shadow-2xl rounded-2xl overflow-hidden">
                   <AnvilControls />
                 </div>
               )}
@@ -165,17 +177,17 @@ export default function DashboardPage() {
           </div>
 
           {/* Search bar */}
-          <form onSubmit={handleSearch} className="mt-5 flex gap-2">
+          <form onSubmit={handleSearch} className="mt-6 flex gap-2">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                className="pl-9 bg-gray-800 border-gray-700 text-white placeholder:text-gray-500 h-11 text-sm focus-visible:ring-blue-500"
+                className="pl-10 bg-card border-border text-foreground placeholder:text-muted-foreground/60 h-11 text-sm rounded-xl focus-visible:ring-primary/50 focus-visible:border-primary/50"
                 placeholder="Search by Address / Tx Hash / Block Number"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
             </div>
-            <Button type="submit" className="h-11 px-5 bg-blue-600 hover:bg-blue-500 text-white">
+            <Button type="submit" className="h-11 px-6 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-semibold">
               Search
             </Button>
           </form>
@@ -183,109 +195,111 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Stats row ── */}
-      <div className="border-b border-gray-800 bg-gray-900/60">
-        <div className="max-w-5xl mx-auto px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-gray-800 rounded-lg">
-              <Blocks className="w-4 h-4 text-blue-400" />
-            </div>
-            <div>
-              <div className="text-gray-400 text-[11px] uppercase tracking-wider">Latest Block</div>
-              <div className="text-white font-mono font-bold text-sm">{latestBlock.toLocaleString()}</div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-gray-800 rounded-lg">
-              <ArrowRightLeft className="w-4 h-4 text-purple-400" />
-            </div>
-            <div>
-              <div className="text-gray-400 text-[11px] uppercase tracking-wider">Transactions</div>
-              <div className="text-white font-mono font-bold text-sm">{transactions.length.toLocaleString()}</div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-gray-800 rounded-lg">
-              <Fuel className="w-4 h-4 text-yellow-400" />
-            </div>
-            <div>
-              <div className="text-gray-400 text-[11px] uppercase tracking-wider">Gas Price</div>
-              <div className="text-white font-mono font-bold text-sm">
-                {nodeStatus === "running" ? gasPrice : "—"}
+      <div className="border-b border-border bg-card/40 backdrop-blur-sm">
+        <div className="max-w-5xl mx-auto px-4 py-0 grid grid-cols-2 sm:grid-cols-4 divide-x divide-border">
+          {[
+            {
+              icon: <Blocks className="w-4 h-4 text-primary" />,
+              label: "Latest Block",
+              value: latestBlock.toLocaleString(),
+              color: "bg-primary/10",
+            },
+            {
+              icon: <ArrowRightLeft className="w-4 h-4 text-violet-400" />,
+              label: "Transactions",
+              value: transactions.length.toLocaleString(),
+              color: "bg-violet-400/10",
+            },
+            {
+              icon: <Fuel className="w-4 h-4 text-amber-400" />,
+              label: "Gas Price",
+              value: nodeStatus === "running" ? gasPrice : "—",
+              color: "bg-amber-400/10",
+            },
+            {
+              icon: <Activity className="w-4 h-4 text-emerald-400" />,
+              label: "Node Status",
+              value: null,
+              color: "bg-emerald-400/10",
+            },
+          ].map((stat, i) => (
+            <div key={i} className="flex items-center gap-3 px-4 sm:px-6 py-4">
+              <div className={`p-2 rounded-lg ${stat.color} flex-shrink-0`}>
+                {stat.icon}
+              </div>
+              <div className="min-w-0">
+                <div className="text-muted-foreground text-[10px] uppercase tracking-widest font-medium">{stat.label}</div>
+                {stat.value !== null ? (
+                  <div className="text-foreground font-mono font-bold text-sm mt-0.5 truncate">{stat.value}</div>
+                ) : (
+                  <div className="mt-1">
+                    <Badge
+                      variant={nodeStatus === "running" ? "default" : nodeStatus === "error" ? "destructive" : "secondary"}
+                      className="text-[10px] px-2 py-0 rounded-full font-mono tracking-wider"
+                    >
+                      {nodeStatus.toUpperCase()}
+                    </Badge>
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-gray-800 rounded-lg">
-              <Activity className="w-4 h-4 text-green-400" />
-            </div>
-            <div>
-              <div className="text-gray-400 text-[11px] uppercase tracking-wider">Node Status</div>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <Badge
-                  variant={
-                    nodeStatus === "running"
-                      ? "default"
-                      : nodeStatus === "error"
-                        ? "destructive"
-                        : "secondary"
-                  }
-                  className="text-[11px] px-1.5 py-0"
-                >
-                  {nodeStatus.toUpperCase()}
-                </Badge>
-              </div>
-            </div>
-          </div>
+          ))}
         </div>
       </div>
 
-      {/* ── Main content: Latest Blocks + Latest Transactions ── */}
-      <div className="max-w-5xl mx-auto px-4 py-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* ── Main content ── */}
+      <div className="max-w-5xl mx-auto px-4 py-6 grid grid-cols-1 md:grid-cols-2 gap-5">
 
-        {/* Latest Blocks */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
-            <span className="text-white font-semibold text-sm">Latest Blocks</span>
+        {/* ── Latest Blocks ── */}
+        <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-border bg-card">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-primary/10">
+                <Blocks className="w-3.5 h-3.5 text-primary" />
+              </div>
+              <span className="text-foreground font-semibold text-sm">Latest Blocks</span>
+            </div>
             {nodeStatus === "running" && (
-              <span className="flex items-center gap-1 text-green-400 text-xs">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+              <span className="flex items-center gap-1.5 text-emerald-400 text-xs font-mono">
+                <TrendingUp className="w-3 h-3" />
                 LIVE
               </span>
             )}
           </div>
 
-          <div className="divide-y divide-gray-800">
+          <div className="divide-y divide-border">
             {blocks.length === 0 ? (
-              <div className="px-4 py-8 text-center text-gray-600 text-sm">
-                {nodeStatus === "running" ? "Waiting for blocks…" : "Start Anvil to see blocks"}
+              <div className="px-5 py-10 flex flex-col items-center gap-2 text-center">
+                <Blocks className="w-8 h-8 text-border" />
+                <p className="text-muted-foreground text-sm">
+                  {nodeStatus === "running" ? "Waiting for blocks…" : "Start Anvil to see blocks"}
+                </p>
               </div>
             ) : (
               blocks.map((b) => (
-                <div key={b.number} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-800/50 transition-colors">
-                  <div className="flex-shrink-0 w-9 h-9 bg-gray-800 rounded-lg flex items-center justify-center">
-                    <Blocks className="w-4 h-4 text-gray-400" />
+                <div key={b.number} className="group flex items-center gap-3 px-5 py-3 hover:bg-accent/40 transition-colors">
+                  <div className="flex-shrink-0 w-9 h-9 bg-primary/10 rounded-xl flex items-center justify-center">
+                    <Blocks className="w-4 h-4 text-primary" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Link href={`/blocks?number=${b.number}`} className="text-blue-400 hover:text-blue-300 font-mono text-sm font-semibold">
-                        {b.number}
-                      </Link>
-                    </div>
-                    <div className="flex items-center gap-1 text-gray-500 text-xs mt-0.5">
+                    <Link
+                      href={`/blocks?number=${b.number}`}
+                      className="text-primary hover:underline font-mono text-sm font-bold"
+                    >
+                      #{b.number}
+                    </Link>
+                    <div className="flex items-center gap-1 text-muted-foreground text-[11px] mt-0.5">
                       <Clock className="w-3 h-3" />
                       {b.timestamp ? timeAgo(Number(b.timestamp)) : "—"}
                     </div>
                   </div>
                   <div className="text-right flex-shrink-0">
-                    <div className="text-gray-300 text-xs font-mono">
-                      {b.txCount ?? 0}{" "}
-                      <span className="text-gray-500">txns</span>
+                    <div className="text-xs font-mono">
+                      <span className="text-foreground font-medium">{b.txCount ?? 0}</span>
+                      <span className="text-muted-foreground"> txns</span>
                     </div>
-                    <div className="text-gray-500 text-[11px] font-mono mt-0.5">
-                      gas {b.gasUsed ? Number(b.gasUsed).toLocaleString() : "—"}
+                    <div className="text-muted-foreground text-[10px] font-mono mt-0.5">
+                      {b.gasUsed ? `${Number(b.gasUsed).toLocaleString()} gas` : "—"}
                     </div>
                   </div>
                 </div>
@@ -293,67 +307,72 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <div className="border-t border-gray-800 px-4 py-2">
-            <Link href="/blocks" className="flex items-center justify-center gap-1 text-blue-400 hover:text-blue-300 text-xs font-medium py-1">
-              View all blocks <ChevronRight className="w-3 h-3" />
+          <div className="border-t border-border bg-accent/20">
+            <Link
+              href="/blocks"
+              className="flex items-center justify-center gap-1.5 text-primary hover:text-primary/80 text-xs font-semibold py-3 transition-colors"
+            >
+              View all blocks <ChevronRight className="w-3.5 h-3.5" />
             </Link>
           </div>
         </div>
 
-        {/* Latest Transactions */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
-            <span className="text-white font-semibold text-sm">Latest Transactions</span>
+        {/* ── Latest Transactions ── */}
+        <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-border bg-card">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-violet-400/10">
+                <ArrowRightLeft className="w-3.5 h-3.5 text-violet-400" />
+              </div>
+              <span className="text-foreground font-semibold text-sm">Latest Transactions</span>
+            </div>
             {nodeStatus === "running" && (
-              <span className="flex items-center gap-1 text-green-400 text-xs">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+              <span className="flex items-center gap-1.5 text-emerald-400 text-xs font-mono">
+                <TrendingUp className="w-3 h-3" />
                 LIVE
               </span>
             )}
           </div>
 
-          <div className="divide-y divide-gray-800">
+          <div className="divide-y divide-border">
             {recentTxs.length === 0 ? (
-              <div className="px-4 py-8 text-center text-gray-600 text-sm">
-                {nodeStatus === "running" ? "Waiting for transactions…" : "Start Anvil to see transactions"}
+              <div className="px-5 py-10 flex flex-col items-center gap-2 text-center">
+                <ArrowRightLeft className="w-8 h-8 text-border" />
+                <p className="text-muted-foreground text-sm">
+                  {nodeStatus === "running" ? "Waiting for transactions…" : "Start Anvil to see transactions"}
+                </p>
               </div>
             ) : (
               recentTxs.map((tx) => (
-                <div key={tx.hash} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-800/50 transition-colors">
-                  <div className="flex-shrink-0 w-9 h-9 bg-gray-800 rounded-lg flex items-center justify-center">
-                    <ArrowRightLeft className="w-4 h-4 text-gray-400" />
+                <div key={tx.hash} className="group flex items-center gap-3 px-5 py-3 hover:bg-accent/40 transition-colors">
+                  <div className="flex-shrink-0 w-9 h-9 bg-violet-400/10 rounded-xl flex items-center justify-center">
+                    <ArrowRightLeft className="w-4 h-4 text-violet-400" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <Link href={`/tx/${tx.hash}`} className="text-blue-400 hover:text-blue-300 font-mono text-sm">
+                    <Link href={`/tx/${tx.hash}`} className="text-primary hover:underline font-mono text-sm font-bold">
                       {truncate(tx.hash, 20)}
                     </Link>
-                    <div className="text-gray-500 text-xs mt-0.5 font-mono truncate">
-                      <span className="text-gray-400">From</span>{" "}
-                      <span className="text-gray-300">{truncate(tx.from_address)}</span>
+                    <div className="text-muted-foreground text-[11px] mt-0.5 font-mono truncate">
+                      <span>From </span>
+                      <span className="text-foreground/70">{truncate(tx.from_address)}</span>
                       {tx.to_address && (
-                        <>
-                          {" "}
-                          <span className="text-gray-400">To</span>{" "}
-                          <span className="text-gray-300">{truncate(tx.to_address)}</span>
-                        </>
+                        <><span> → </span><span className="text-foreground/70">{truncate(tx.to_address)}</span></>
                       )}
                     </div>
                     {tx.decoded_function && (
-                      <div className="text-[11px] text-purple-400 font-mono mt-0.5 truncate">
+                      <div className="text-[10px] text-violet-400 font-mono mt-0.5 truncate bg-violet-400/5 px-1.5 py-0.5 rounded-md w-fit">
                         {tx.decoded_function}
                       </div>
                     )}
                   </div>
-                  <div className="text-right flex-shrink-0 space-y-0.5">
-                    <div>
-                      <Badge
-                        variant={tx.status === 1 ? "default" : "destructive"}
-                        className="text-[10px] px-1.5 py-0"
-                      >
-                        {tx.status === 1 ? "Success" : "Failed"}
-                      </Badge>
-                    </div>
-                    <div className="text-gray-500 text-[11px] font-mono">
+                  <div className="text-right flex-shrink-0 space-y-1">
+                    <Badge
+                      variant={tx.status === 1 ? "default" : "destructive"}
+                      className="text-[10px] px-2 py-0 rounded-full font-mono"
+                    >
+                      {tx.status === 1 ? "✓" : "✗"}
+                    </Badge>
+                    <div className="text-muted-foreground text-[10px] font-mono">
                       {tx.value && BigInt(tx.value) > 0n
                         ? `${parseFloat(formatEther(BigInt(tx.value))).toFixed(4)} ETH`
                         : "0 ETH"}
@@ -364,13 +383,18 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <div className="border-t border-gray-800 px-4 py-2">
-            <Link href="/" className="flex items-center justify-center gap-1 text-blue-400 hover:text-blue-300 text-xs font-medium py-1">
-              View all transactions <ChevronRight className="w-3 h-3" />
+          <div className="border-t border-border bg-accent/20">
+            <Link
+              href="/"
+              className="flex items-center justify-center gap-1.5 text-primary hover:text-primary/80 text-xs font-semibold py-3 transition-colors"
+            >
+              View all transactions <ChevronRight className="w-3.5 h-3.5" />
             </Link>
           </div>
         </div>
+
       </div>
     </div>
   );
 }
+

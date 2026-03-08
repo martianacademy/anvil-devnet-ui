@@ -21,7 +21,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={`${geistMono.variable} antialiased bg-gray-950 text-white min-h-screen`}>
+      <body className={`${geistMono.variable} antialiased min-h-screen bg-background text-foreground`}>
         <TooltipProvider>
           <Navbar />
           <main>{children}</main>
