@@ -23,34 +23,67 @@ export function getDB(): Database.Database {
     return _db;
 }
 
+function upgradeChainId(db: Database.Database) {
+    // Upgrade blocks table: old schema has number as sole PK, new needs (chain_id, number)
+    const blockCols = (db.prepare("PRAGMA table_info(blocks)").all() as any[]).map((c: any) => c.name);
+    if (!blockCols.includes("chain_id")) {
+        db.exec(`
+            ALTER TABLE blocks RENAME TO blocks_legacy;
+            CREATE TABLE blocks (
+                chain_id INTEGER NOT NULL DEFAULT 31337,
+                number   INTEGER NOT NULL,
+                hash     TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                tx_count  INTEGER NOT NULL,
+                gas_used  TEXT,
+                gas_limit TEXT,
+                PRIMARY KEY (chain_id, number)
+            );
+            INSERT OR IGNORE INTO blocks
+                SELECT 31337, number, hash, timestamp, tx_count, gas_used, gas_limit
+                FROM blocks_legacy;
+            DROP TABLE blocks_legacy;
+        `);
+    }
+
+    // Upgrade transactions table: add chain_id column if missing
+    const txCols = (db.prepare("PRAGMA table_info(transactions)").all() as any[]).map((c: any) => c.name);
+    if (!txCols.includes("chain_id")) {
+        db.exec(`ALTER TABLE transactions ADD COLUMN chain_id INTEGER NOT NULL DEFAULT 31337`);
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_tx_chain ON transactions(chain_id)`);
+    }
+}
+
 function migrate(db: Database.Database) {
     db.exec(`
     CREATE TABLE IF NOT EXISTS blocks (
-      number INTEGER PRIMARY KEY,
-      hash TEXT NOT NULL,
+      chain_id  INTEGER NOT NULL DEFAULT 31337,
+      number    INTEGER NOT NULL,
+      hash      TEXT NOT NULL,
       timestamp INTEGER NOT NULL,
-      tx_count INTEGER NOT NULL,
-      gas_used TEXT,
-      gas_limit TEXT
+      tx_count  INTEGER NOT NULL,
+      gas_used  TEXT,
+      gas_limit TEXT,
+      PRIMARY KEY (chain_id, number)
     );
 
     CREATE TABLE IF NOT EXISTS transactions (
-      hash TEXT PRIMARY KEY,
-      block_number INTEGER NOT NULL,
+      hash           TEXT PRIMARY KEY,
+      chain_id       INTEGER NOT NULL DEFAULT 31337,
+      block_number   INTEGER NOT NULL,
       block_timestamp INTEGER NOT NULL,
-      from_address TEXT NOT NULL,
-      to_address TEXT,
-      value TEXT NOT NULL,
-      input TEXT,
-      gas TEXT,
-      gas_used TEXT,
-      gas_price TEXT,
-      nonce INTEGER,
-      status INTEGER,
-      revert_reason TEXT,
+      from_address   TEXT NOT NULL,
+      to_address     TEXT,
+      value          TEXT NOT NULL,
+      input          TEXT,
+      gas            TEXT,
+      gas_used       TEXT,
+      gas_price      TEXT,
+      nonce          INTEGER,
+      status         INTEGER,
+      revert_reason  TEXT,
       decoded_function TEXT,
-      decoded_params TEXT,
-      FOREIGN KEY (block_number) REFERENCES blocks(number)
+      decoded_params TEXT
     );
 
     CREATE TABLE IF NOT EXISTS contracts (
@@ -115,8 +148,13 @@ function migrate(db: Database.Database) {
       created_at INTEGER NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_tx_from ON transactions(from_address);
-    CREATE INDEX IF NOT EXISTS idx_tx_to ON transactions(to_address);
+    CREATE INDEX IF NOT EXISTS idx_tx_from  ON transactions(from_address);
+    CREATE INDEX IF NOT EXISTS idx_tx_to    ON transactions(to_address);
     CREATE INDEX IF NOT EXISTS idx_tx_block ON transactions(block_number);
+    CREATE INDEX IF NOT EXISTS idx_tx_chain ON transactions(chain_id);
+    CREATE INDEX IF NOT EXISTS idx_blk_chain ON blocks(chain_id);
   `);
+
+    // Upgrade existing DBs that don't have chain_id yet
+    upgradeChainId(db);
 }

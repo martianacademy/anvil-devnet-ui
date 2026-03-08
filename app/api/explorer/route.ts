@@ -9,6 +9,11 @@ const ok = (result: unknown) =>
 const err = (msg: string) =>
     NextResponse.json({ status: "0", message: "NOTOK", result: msg });
 
+/** Current active chainId — used to scope all DB queries */
+function getChainId() {
+    return getAnvilState().config?.chainId ?? 31337;
+}
+
 async function rpcCall(method: string, params: unknown[] = []) {
     const port = getAnvilState().config?.port ?? 8545;
     const res = await fetch(`http://127.0.0.1:${port}`, {
@@ -28,6 +33,8 @@ export async function GET(req: NextRequest) {
     const db = getDB();
 
     try {
+        const chainId = getChainId();
+
         // ── module=account ──────────────────────────────────────────────────────
         if (module === "account") {
             if (action === "balance") {
@@ -59,10 +66,11 @@ export async function GET(req: NextRequest) {
                 const rows = db.prepare(`
           SELECT * FROM transactions
           WHERE (lower(from_address) = ? OR lower(to_address) = ?)
+            AND chain_id = ?
             AND block_number BETWEEN ? AND ?
           ORDER BY block_number ${sort}
           LIMIT ? OFFSET ?
-        `).all(address, address, start, end, limit, skip);
+        `).all(address, address, chainId, start, end, limit, skip);
                 return ok(rows);
             }
 
@@ -155,8 +163,8 @@ export async function GET(req: NextRequest) {
             const limit = Math.min(offset, 100);
             const skip = (page - 1) * limit;
             const rows = db.prepare(
-                "SELECT number, hash, timestamp, tx_count AS txCount, gas_used AS gasUsed FROM blocks ORDER BY number DESC LIMIT ? OFFSET ?"
-            ).all(limit, skip);
+                "SELECT number, hash, timestamp, tx_count AS txCount, gas_used AS gasUsed FROM blocks WHERE chain_id = ? ORDER BY number DESC LIMIT ? OFFSET ?"
+            ).all(chainId, limit, skip);
             return ok(rows);
         }
 
@@ -164,7 +172,7 @@ export async function GET(req: NextRequest) {
             const ts = parseInt(p.get("timestamp") ?? "0");
             const closest = p.get("closest") ?? "before";
             const op = closest === "before" ? "<=" : ">=";
-            const row = db.prepare(`SELECT number FROM blocks WHERE timestamp ${op} ? ORDER BY timestamp DESC LIMIT 1`).get(ts) as any;
+            const row = db.prepare(`SELECT number FROM blocks WHERE chain_id = ? AND timestamp ${op} ? ORDER BY timestamp DESC LIMIT 1`).get(chainId, ts) as any;
             return row ? ok(row.number.toString()) : err("No block found");
         }
 

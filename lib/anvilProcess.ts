@@ -67,7 +67,14 @@ export function startAnvil(config: AnvilConfig): Promise<void> {
             args.push("--no-mining");
         }
 
-        const stateFile = config.stateFile ?? "/tmp/anvil-devnet-state.json";
+        // Use a per-chainId state file so each chain's EVM state (deployed contracts,
+        // balances, nonces) is isolated. Fall back to chain-specific default if the
+        // user left the old generic path.
+        const defaultStateFile = `/tmp/anvil-state-${config.chainId}.json`;
+        const stateFile =
+            !config.stateFile || config.stateFile === "/tmp/anvil-devnet-state.json"
+                ? defaultStateFile
+                : config.stateFile;
         if (config.persistState) {
             if (fs.existsSync(stateFile)) {
                 args.push("--load-state", stateFile);

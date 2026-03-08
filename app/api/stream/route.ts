@@ -41,6 +41,8 @@ export async function GET() {
                     const data = await res.json();
                     const currentBlock = parseInt(data.result ?? "0x0", 16);
 
+                    const chainId = getAnvilState().config?.chainId ?? 31337;
+
                     if (currentBlock <= lastBlock) return;
 
                     const from = lastBlock === -1 ? currentBlock : lastBlock + 1;
@@ -61,6 +63,7 @@ export async function GET() {
                         if (!block) continue;
 
                         const blockRecord = {
+                            chain_id: chainId,
                             number: bn,
                             hash: block.hash,
                             timestamp: parseInt(block.timestamp, 16),
@@ -95,6 +98,7 @@ export async function GET() {
 
                             const txRecord = {
                                 hash: tx.hash,
+                                chain_id: chainId,
                                 block_number: bn,
                                 block_timestamp: blockRecord.timestamp,
                                 from_address: tx.from,

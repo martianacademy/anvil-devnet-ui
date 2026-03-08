@@ -2,6 +2,7 @@ import { getDB } from "./db";
 
 export interface TxRecord {
     hash: string;
+    chain_id: number;
     block_number: number;
     block_timestamp: number;
     from_address: string;
@@ -19,6 +20,7 @@ export interface TxRecord {
 }
 
 export interface BlockRecord {
+    chain_id: number;
     number: number;
     hash: string;
     timestamp: number;
@@ -30,46 +32,47 @@ export interface BlockRecord {
 export function insertBlock(block: BlockRecord) {
     const db = getDB();
     db.prepare(`
-    INSERT OR REPLACE INTO blocks (number, hash, timestamp, tx_count, gas_used, gas_limit)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(block.number, block.hash, block.timestamp, block.tx_count, block.gas_used, block.gas_limit);
+    INSERT OR REPLACE INTO blocks (chain_id, number, hash, timestamp, tx_count, gas_used, gas_limit)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(block.chain_id, block.number, block.hash, block.timestamp, block.tx_count, block.gas_used, block.gas_limit);
 }
 
 export function insertTx(tx: TxRecord) {
     const db = getDB();
     db.prepare(`
     INSERT OR REPLACE INTO transactions (
-      hash, block_number, block_timestamp, from_address, to_address,
+      hash, chain_id, block_number, block_timestamp, from_address, to_address,
       value, input, gas, gas_used, gas_price, nonce, status,
       revert_reason, decoded_function, decoded_params
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-        tx.hash, tx.block_number, tx.block_timestamp, tx.from_address, tx.to_address,
+        tx.hash, tx.chain_id, tx.block_number, tx.block_timestamp, tx.from_address, tx.to_address,
         tx.value, tx.input, tx.gas, tx.gas_used, tx.gas_price, tx.nonce, tx.status,
         tx.revert_reason, tx.decoded_function, tx.decoded_params
     );
 }
 
-export function getRecentTxs(limit = 100): TxRecord[] {
+export function getRecentTxs(chainId: number, limit = 100): TxRecord[] {
     const db = getDB();
-    return db.prepare(`
-    SELECT * FROM transactions ORDER BY block_number DESC, nonce DESC LIMIT ?
-  `).all(limit) as TxRecord[];
+    return db.prepare(
+        "SELECT * FROM transactions WHERE chain_id = ? ORDER BY block_number DESC, nonce DESC LIMIT ?"
+    ).all(chainId, limit) as TxRecord[];
 }
 
+/** Hash is globally unique — no chainId filter needed */
 export function getTxByHash(hash: string): TxRecord | null {
     const db = getDB();
     return db.prepare("SELECT * FROM transactions WHERE hash = ?").get(hash) as TxRecord | null;
 }
 
-export function getBlockByNumber(number: number): BlockRecord | null {
+export function getBlockByNumber(chainId: number, number: number): BlockRecord | null {
     const db = getDB();
-    return db.prepare("SELECT * FROM blocks WHERE number = ?").get(number) as BlockRecord | null;
+    return db.prepare("SELECT * FROM blocks WHERE chain_id = ? AND number = ?").get(chainId, number) as BlockRecord | null;
 }
 
-export function getRecentBlocks(limit = 50): BlockRecord[] {
+export function getRecentBlocks(chainId: number, limit = 50): BlockRecord[] {
     const db = getDB();
-    return db.prepare("SELECT * FROM blocks ORDER BY number DESC LIMIT ?").all(limit) as BlockRecord[];
+    return db.prepare("SELECT * FROM blocks WHERE chain_id = ? ORDER BY number DESC LIMIT ?").all(chainId, limit) as BlockRecord[];
 }
 
 export function saveTxTrace(hash: string, structLogs: unknown, callTrace: unknown) {

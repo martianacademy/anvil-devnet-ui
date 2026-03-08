@@ -8,8 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useDevnetStore } from "@/store/useDevnetStore";
 
+const DEFAULT_CHAIN_ID = 31337;
+
 const DEFAULT_CONFIG = {
-    chainId: 31337,
+    chainId: DEFAULT_CHAIN_ID,
     port: 8545,
     blockTime: 2,
     accounts: 10,
@@ -17,11 +19,11 @@ const DEFAULT_CONFIG = {
     baseFee: 0,
     stepsTracing: true,
     persistState: true,
-    stateFile: "/tmp/anvil-devnet-state.json",
+    stateFile: `/tmp/anvil-state-${DEFAULT_CHAIN_ID}.json`,
 };
 
 export function AnvilControls() {
-    const { nodeStatus, setNodeStatus, setNodeConfig, setPort, setChainId } = useDevnetStore();
+    const { nodeStatus, setNodeStatus, setNodeConfig, setPort, setChainId, saveChainSnapshot } = useDevnetStore();
     const [config, setConfig] = useState(DEFAULT_CONFIG);
     const [showConfig, setShowConfig] = useState(false);
     const [forkUrl, setForkUrl] = useState("");
@@ -52,6 +54,8 @@ export function AnvilControls() {
 
     const stop = async () => {
         try {
+            // Persist current chain's UI state before the node goes down
+            saveChainSnapshot();
             await fetch("/api/anvil/stop", { method: "POST" });
             setNodeStatus("stopped");
         } catch (err: any) {
@@ -104,7 +108,14 @@ export function AnvilControls() {
                             <Input
                                 className="h-7 font-mono bg-gray-800 border-gray-600 text-white"
                                 value={config.chainId}
-                                onChange={(e) => setConfig({ ...config, chainId: parseInt(e.target.value) || 31337 })}
+                                onChange={(e) => {
+                                    const cid = parseInt(e.target.value) || 31337;
+                                    setConfig({
+                                        ...config,
+                                        chainId: cid,
+                                        stateFile: `/tmp/anvil-state-${cid}.json`,
+                                    });
+                                }}
                             />
                         </div>
                         <div>

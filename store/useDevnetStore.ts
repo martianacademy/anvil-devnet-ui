@@ -25,6 +25,12 @@ export interface ContractInfo {
     abi: unknown[];
 }
 
+/** Per-chain cached UI state so switching chains restores previous session data */
+interface ChainSnapshot {
+    transactions: TxSummary[];
+    contracts: Record<string, ContractInfo>;
+}
+
 interface DevnetStore {
     // Node state
     nodeStatus: NodeStatus;
@@ -33,7 +39,10 @@ interface DevnetStore {
     chainId: number;
     port: number;
 
-    // Block/tx data
+    // Per-chain data cache (keyed by chainId)
+    chainData: Record<number, ChainSnapshot>;
+
+    // Block/tx data (for the ACTIVE chain)
     transactions: TxSummary[];
 
     // Debugger state
@@ -51,6 +60,7 @@ interface DevnetStore {
     setLatestBlock: (n: number) => void;
     setChainId: (id: number) => void;
     setPort: (p: number) => void;
+    saveChainSnapshot: () => void;
     addTransactions: (txs: TxSummary[]) => void;
     clearTransactions: () => void;
     selectTx: (hash: string) => void;
@@ -71,11 +81,12 @@ export const useDevnetStore = create<DevnetStore>((set) => ({
         baseFee: 0,
         stepsTracing: true,
         persistState: true,
-        stateFile: "/tmp/anvil-devnet-state.json",
+        stateFile: "/tmp/anvil-state-31337.json",
     },
     latestBlock: 0,
     chainId: 31337,
     port: 8545,
+    chainData: {},
     transactions: [],
     selectedTx: null,
     traceSteps: [],
@@ -87,12 +98,38 @@ export const useDevnetStore = create<DevnetStore>((set) => ({
     setNodeConfig: (c) => set((state) => ({ nodeConfig: { ...state.nodeConfig, ...c } })),
     setLatestBlock: (n) => set({ latestBlock: n }),
     setChainId: (id) =>
-        set((state) =>
-            id !== state.chainId
-                ? { chainId: id, transactions: [], latestBlock: 0 }
-                : { chainId: id }
-        ),
+        set((state) => {
+            if (id === state.chainId) return {};
+            // Save current chain's UI state before switching
+            const updatedCache: Record<number, ChainSnapshot> = {
+                ...state.chainData,
+                [state.chainId]: {
+                    transactions: state.transactions,
+                    contracts: state.contracts,
+                },
+            };
+            // Restore saved state for the target chain (or start fresh)
+            const saved = updatedCache[id] ?? { transactions: [], contracts: {} };
+            return {
+                chainId: id,
+                chainData: updatedCache,
+                transactions: saved.transactions,
+                contracts: saved.contracts,
+                latestBlock: 0,
+            };
+        }),
     setPort: (p) => set({ port: p }),
+    /** Manually persist current chain data (call before intentional stop) */
+    saveChainSnapshot: () =>
+        set((state) => ({
+            chainData: {
+                ...state.chainData,
+                [state.chainId]: {
+                    transactions: state.transactions,
+                    contracts: state.contracts,
+                },
+            },
+        })),
     addTransactions: (txs) =>
         set((state) => {
             const existing = new Set(state.transactions.map((t) => t.hash));
