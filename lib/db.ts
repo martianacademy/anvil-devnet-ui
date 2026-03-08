@@ -24,37 +24,46 @@ export function getDB(): Database.Database {
 }
 
 function upgradeChainId(db: Database.Database) {
-    // Upgrade blocks table: old schema has number as sole PK, new needs (chain_id, number)
-    const blockCols = (db.prepare("PRAGMA table_info(blocks)").all() as any[]).map((c: any) => c.name);
-    if (!blockCols.includes("chain_id")) {
-        db.exec(`
-            ALTER TABLE blocks RENAME TO blocks_legacy;
-            CREATE TABLE blocks (
-                chain_id INTEGER NOT NULL DEFAULT 31337,
-                number   INTEGER NOT NULL,
-                hash     TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                tx_count  INTEGER NOT NULL,
-                gas_used  TEXT,
-                gas_limit TEXT,
-                PRIMARY KEY (chain_id, number)
-            );
-            INSERT OR IGNORE INTO blocks
-                SELECT 31337, number, hash, timestamp, tx_count, gas_used, gas_limit
-                FROM blocks_legacy;
-            DROP TABLE blocks_legacy;
-        `);
+    // Only run against tables that ALREADY exist (fresh DBs are handled by CREATE TABLE below)
+    const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as any[]).map((r: any) => r.name);
+
+    if (tables.includes("blocks")) {
+        const blockCols = (db.prepare("PRAGMA table_info(blocks)").all() as any[]).map((c: any) => c.name);
+        if (!blockCols.includes("chain_id")) {
+            // Recreate blocks with composite PK, preserving old data under chainId 31337
+            db.exec(`
+                ALTER TABLE blocks RENAME TO blocks_legacy;
+                CREATE TABLE blocks (
+                    chain_id  INTEGER NOT NULL DEFAULT 31337,
+                    number    INTEGER NOT NULL,
+                    hash      TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    tx_count  INTEGER NOT NULL,
+                    gas_used  TEXT,
+                    gas_limit TEXT,
+                    PRIMARY KEY (chain_id, number)
+                );
+                INSERT OR IGNORE INTO blocks
+                    SELECT 31337, number, hash, timestamp, tx_count, gas_used, gas_limit
+                    FROM blocks_legacy;
+                DROP TABLE blocks_legacy;
+            `);
+        }
     }
 
-    // Upgrade transactions table: add chain_id column if missing
-    const txCols = (db.prepare("PRAGMA table_info(transactions)").all() as any[]).map((c: any) => c.name);
-    if (!txCols.includes("chain_id")) {
-        db.exec(`ALTER TABLE transactions ADD COLUMN chain_id INTEGER NOT NULL DEFAULT 31337`);
-        db.exec(`CREATE INDEX IF NOT EXISTS idx_tx_chain ON transactions(chain_id)`);
+    if (tables.includes("transactions")) {
+        const txCols = (db.prepare("PRAGMA table_info(transactions)").all() as any[]).map((c: any) => c.name);
+        if (!txCols.includes("chain_id")) {
+            db.exec(`ALTER TABLE transactions ADD COLUMN chain_id INTEGER NOT NULL DEFAULT 31337`);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_tx_chain ON transactions(chain_id)`);
+        }
     }
 }
 
 function migrate(db: Database.Database) {
+    // Run upgrade FIRST so existing tables get chain_id before CREATE TABLE IF NOT EXISTS is a no-op
+    upgradeChainId(db);
+
     db.exec(`
     CREATE TABLE IF NOT EXISTS blocks (
       chain_id  INTEGER NOT NULL DEFAULT 31337,
