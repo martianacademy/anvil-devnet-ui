@@ -86,7 +86,12 @@ export const useDevnetStore = create<DevnetStore>((set) => ({
     setNodeStatus: (s) => set({ nodeStatus: s }),
     setNodeConfig: (c) => set((state) => ({ nodeConfig: { ...state.nodeConfig, ...c } })),
     setLatestBlock: (n) => set({ latestBlock: n }),
-    setChainId: (id) => set({ chainId: id }),
+    setChainId: (id) =>
+        set((state) =>
+            id !== state.chainId
+                ? { chainId: id, transactions: [], latestBlock: 0 }
+                : { chainId: id }
+        ),
     setPort: (p) => set({ port: p }),
     addTransactions: (txs) =>
         set((state) => {

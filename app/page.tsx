@@ -89,6 +89,11 @@ export default function DashboardPage() {
     return () => clearInterval(id);
   }, []);
 
+  // clear local block cache when chain changes
+  useEffect(() => {
+    setBlocks([]);
+  }, [chainId]);
+
   // load blocks
   useEffect(() => {
     if (nodeStatus !== "running") return;
@@ -96,7 +101,7 @@ export default function DashboardPage() {
       .then((r) => r.json())
       .then((d) => Array.isArray(d.result) && setBlocks(d.result))
       .catch(() => { });
-  }, [latestBlock, nodeStatus]);
+  }, [latestBlock, nodeStatus, chainId]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
