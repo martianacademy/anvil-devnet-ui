@@ -68,6 +68,7 @@ interface DevnetStore {
     setCurrentStep: (n: number) => void;
     setCallTree: (tree: CallNode | null) => void;
     registerContract: (address: string, name: string, abi: unknown[]) => void;
+    resetChainData: () => void;
 }
 
 export const useDevnetStore = create<DevnetStore>((set) => ({
@@ -150,4 +151,19 @@ export const useDevnetStore = create<DevnetStore>((set) => ({
                 [address.toLowerCase()]: { address, name, abi },
             },
         })),
+    resetChainData: () =>
+        set((state) => {
+            const updated = { ...state.chainData };
+            delete updated[state.chainId];
+            return {
+                transactions: [],
+                contracts: {},
+                chainData: updated,
+                latestBlock: 0,
+                selectedTx: null,
+                traceSteps: [],
+                currentStep: 0,
+                callTree: null,
+            };
+        }),
 }));

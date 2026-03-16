@@ -4,6 +4,8 @@ import "./globals.css";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ToastProvider } from "@/components/ui/toast";
+import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
@@ -24,11 +26,16 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className={`${geistMono.variable} antialiased min-h-screen bg-background text-foreground`} suppressHydrationWarning>
         <TooltipProvider>
-          <Navbar />
-          <main>{children}</main>
-          <Footer />
+          <ToastProvider>
+            <ConfirmProvider>
+              <Navbar />
+              <main>{children}</main>
+              <Footer />
+            </ConfirmProvider>
+          </ToastProvider>
         </TooltipProvider>
       </body>
     </html>
   );
 }
+

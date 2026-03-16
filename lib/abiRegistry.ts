@@ -109,5 +109,66 @@ export async function autoFetchABI(address: string, chainId: number): Promise<Ab
         }
     } catch { /* ignore */ }
 
+    // 3. Try block explorer (Etherscan / BSCScan etc.)
+    try {
+        const abi = await fetchFromExplorer(address, chainId);
+        if (abi) return abi;
+    } catch { /* ignore */ }
+
     return null;
 }
+
+/** Explorer API base URLs by chain ID */
+const EXPLORER_APIS: Record<number, string> = {
+    1: "https://api.etherscan.io/api",
+    56: "https://api.bscscan.com/api",
+    137: "https://api.polygonscan.com/api",
+    42161: "https://api.arbiscan.io/api",
+    10: "https://api-optimistic.etherscan.io/api",
+    8453: "https://api.basescan.org/api",
+    43114: "https://api.snowtrace.io/api",
+    250: "https://api.ftmscan.com/api",
+};
+
+async function fetchFromExplorer(address: string, chainId: number): Promise<Abi | null> {
+    const baseUrl = EXPLORER_APIS[chainId];
+    if (!baseUrl) return null;
+
+    const url = `${baseUrl}?module=contract&action=getabi&address=${address}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    if (data.status !== "1" || !data.result) return null;
+
+    try {
+        const abi = JSON.parse(data.result) as Abi;
+        // Extract contract name from ABI (first function or event name)
+        const firstName = (abi as unknown as Array<{ name?: string }>).find((x) => x.name)?.name ?? "Unknown";
+        saveContract(address, firstName, abi);
+        return abi;
+    } catch {
+        return null;
+    }
+}
+
+/** Batch-fetch ABIs for multiple addresses, returns a map of address → ABI */
+export async function batchFetchABIs(
+    addresses: string[],
+    chainId: number
+): Promise<Record<string, Abi>> {
+    const unique = [...new Set(addresses.map((a) => a.toLowerCase()))];
+    const result: Record<string, Abi> = {};
+
+    await Promise.all(
+        unique.map(async (addr) => {
+            try {
+                const abi = await autoFetchABI(addr, chainId);
+                if (abi) result[addr] = abi;
+            } catch { /* skip */ }
+        })
+    );
+
+    return result;
+}
+

@@ -16,8 +16,10 @@ import {
     CommandSeparator,
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Check, ChevronsUpDown, Loader2 } from "lucide-react";
+import { Check, ChevronsUpDown, Loader2, RotateCcw } from "lucide-react";
 import { useDevnetStore } from "@/store/useDevnetStore";
+import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 // ── well-known chains pinned at top ──────────────────────────────────────────
 const PINNED_CHAINS = [
@@ -50,8 +52,10 @@ const DEFAULT_CONFIG = {
 };
 
 export function AnvilControls() {
-    const { nodeStatus, nodeConfig, setNodeStatus, setNodeConfig, setPort, setChainId, saveChainSnapshot } =
+    const { nodeStatus, nodeConfig, setNodeStatus, setNodeConfig, setPort, setChainId, saveChainSnapshot, resetChainData } =
         useDevnetStore();
+    const { toast } = useToast();
+    const { confirm } = useConfirm();
 
     // Init from stored nodeConfig so chain selection survives dropdown close/reopen
     const [config, setConfig] = useState(() => {
@@ -129,13 +133,19 @@ export function AnvilControls() {
                 body: JSON.stringify(body),
             });
             if (!res.ok) throw new Error((await res.json()).error);
+            const data = await res.json();
+            // Show the resolved (auto-pinned) block number in the UI
+            if (data.forkBlockNumber && !forkBlock) {
+                setForkBlock(String(data.forkBlockNumber));
+            }
             setNodeConfig(body);
             setPort(config.port);
             setChainId(config.chainId);
             setNodeStatus("running");
-        } catch (err: any) {
+        } catch (err: unknown) {
             setNodeStatus("error");
-            alert(`Failed to start: ${err.message}`);
+            const msg = err instanceof Error ? err.message : "Unknown error";
+            toast(`Failed to start: ${msg}`, "error");
         }
     };
 
@@ -144,8 +154,34 @@ export function AnvilControls() {
             saveChainSnapshot();
             await fetch("/api/anvil/stop", { method: "POST" });
             setNodeStatus("stopped");
-        } catch (err: any) {
-            alert(`Stop failed: ${err.message}`);
+            toast("Anvil stopped", "success");
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Unknown error";
+            toast(`Stop failed: ${msg}`, "error");
+        }
+    };
+
+    const resetSession = async () => {
+        const confirmed = await confirm({
+            title: "Reset Session",
+            description: "This will stop Anvil and delete the saved state for this chain. You'll start with a clean slate.",
+            confirmLabel: "Reset",
+            variant: "destructive",
+        });
+        if (!confirmed) return;
+        try {
+            await fetch("/api/anvil/reset", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ chainId: config.chainId, forkUrl }),
+            });
+            setNodeStatus("stopped");
+            setForkBlock("");
+            resetChainData();
+            toast("Session reset successfully", "success");
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Unknown error";
+            toast(`Reset failed: ${msg}`, "error");
         }
     };
 
@@ -169,6 +205,9 @@ export function AnvilControls() {
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setShowConfig(!showConfig)}>
                         ⚙ Config
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={resetSession} title="Reset session — stop Anvil and delete saved state">
+                        <RotateCcw className="w-3.5 h-3.5" />
                     </Button>
                 </div>
 

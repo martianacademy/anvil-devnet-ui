@@ -1,5 +1,18 @@
 import { NextResponse } from "next/server";
 import { getAnvilState, isAnvilRunning } from "@/lib/anvilProcess";
+import os from "os";
+
+function getLanIp(): string | null {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name] ?? []) {
+            if (iface.family === "IPv4" && !iface.internal) {
+                return iface.address;
+            }
+        }
+    }
+    return null;
+}
 
 async function probePort(port: number): Promise<{ blockNumber: number; chainId: number } | null> {
     try {
@@ -35,9 +48,6 @@ export async function GET() {
         let blockNumber = 0;
         let chainId: number | null = state.config?.chainId ?? null;
 
-        // Always probe the actual RPC port — covers:
-        //   • Anvil started externally via start.sh
-        //   • Next.js hot-reload cleared the in-memory process handle
         const portsToTry = [...new Set([configuredPort, 8545])];
         for (const p of portsToTry) {
             const probe = await probePort(p);
@@ -51,7 +61,6 @@ export async function GET() {
         }
 
         if (!running) {
-            // Double-check in-memory process really is dead
             running = isAnvilRunning();
         }
 
@@ -61,12 +70,15 @@ export async function GET() {
             port,
             chainId,
             blockNumber,
+            lanIp: getLanIp(),
             uptime: state.startedAt ? Math.floor((Date.now() - state.startedAt) / 1000) : 0,
             config: running
                 ? { ...(state.config ?? {}), port, chainId }
                 : state.config,
         });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }
+

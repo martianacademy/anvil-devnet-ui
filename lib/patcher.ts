@@ -7,7 +7,7 @@ export async function fundNative(
     port = 8545
 ): Promise<void> {
     const amountHex = toHex(parseEther(amount));
-    await fetch(`http://127.0.0.1:${port}`, {
+    const res = await fetch(`http://127.0.0.1:${port}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -16,7 +16,10 @@ export async function fundNative(
             params: [address, amountHex],
             id: 1,
         }),
-    }).then((r) => r.json());
+    });
+    if (!res.ok) throw new Error(`RPC request failed: HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.error) throw new Error(`anvil_setBalance failed: ${data.error.message ?? JSON.stringify(data.error)}`);
 }
 
 export async function fundERC20(

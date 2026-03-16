@@ -16,6 +16,8 @@ import {
   ChevronRight,
   Zap,
   TrendingUp,
+  Copy,
+  Check,
 } from "lucide-react";
 import Link from "next/link";
 import { formatEther } from "viem";
@@ -59,6 +61,26 @@ export default function DashboardPage() {
   const [query, setQuery] = useState("");
   const [gasPrice, setGasPrice] = useState<string>("—");
   const [blocks, setBlocks] = useState<BlockRow[]>([]);
+  const [copied, setCopied] = useState<"local" | "lan" | false>(false);
+  const [lanIp, setLanIp] = useState<string | null>(null);
+
+  const localRpcUrl = `http://127.0.0.1:${port}`;
+  const lanRpcUrl = lanIp ? `http://${lanIp}:${port}` : null;
+
+  const copyUrl = (url: string, type: "local" | "lan") => {
+    navigator.clipboard.writeText(url);
+    setCopied(type);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  useEffect(() => {
+    fetch("/api/anvil/status")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.lanIp) setLanIp(data.lanIp);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const poll = async () => {
@@ -154,6 +176,32 @@ export default function DashboardPage() {
                   <span className="text-muted-foreground">Port</span>
                   {port}
                 </span>
+                {nodeStatus === "running" && (
+                  <>
+                    <button
+                      onClick={() => copyUrl(localRpcUrl, "local")}
+                      className="inline-flex items-center gap-1.5 bg-accent/60 border border-border text-xs font-mono px-2.5 py-0.5 rounded-full text-primary hover:bg-accent hover:border-primary/30 transition-colors cursor-pointer"
+                    >
+                      <span className="text-muted-foreground">RPC</span>
+                      {localRpcUrl}
+                      {copied === "local"
+                        ? <Check className="w-3 h-3 text-green-400" />
+                        : <Copy className="w-3 h-3 text-muted-foreground" />}
+                    </button>
+                    {lanRpcUrl && (
+                      <button
+                        onClick={() => copyUrl(lanRpcUrl, "lan")}
+                        className="inline-flex items-center gap-1.5 bg-accent/60 border border-border text-xs font-mono px-2.5 py-0.5 rounded-full text-primary hover:bg-accent hover:border-primary/30 transition-colors cursor-pointer"
+                      >
+                        <span className="text-muted-foreground">LAN</span>
+                        {lanRpcUrl}
+                        {copied === "lan"
+                          ? <Check className="w-3 h-3 text-green-400" />
+                          : <Copy className="w-3 h-3 text-muted-foreground" />}
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           </div>

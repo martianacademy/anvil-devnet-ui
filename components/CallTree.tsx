@@ -3,6 +3,7 @@
 import type { CallNode } from "@/lib/traceParser";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { decodeCalldata } from "./TraceLog/utils";
 
 interface Props {
     node: CallNode;
@@ -26,6 +27,7 @@ function CallNodeRow({ node, depth = 0 }: Props) {
     const [expanded, setExpanded] = useState(depth < 2);
     const hasChildren = (node.calls?.length ?? 0) > 0;
     const colorClass = CALL_COLORS[node.type?.toUpperCase()] ?? "text-gray-300";
+    const decoded = decodeCalldata(node.input ?? "");
 
     return (
         <div style={{ marginLeft: depth * 16 }} className="my-0.5">
@@ -42,9 +44,17 @@ function CallNodeRow({ node, depth = 0 }: Props) {
                     {node.type?.toUpperCase() ?? "CALL"}
                 </Badge>
                 <span className="text-gray-300">{truncate(node.to ?? "")}</span>
-                {node.input && node.input.length >= 10 && (
+                {decoded ? (
+                    <>
+                        <span className="text-gray-500">.</span>
+                        <span className="text-emerald-400 font-semibold">{decoded.name}</span>
+                        <span className="text-gray-500">(</span>
+                        <span className="text-gray-300">{decoded.decodedParams.join(", ")}</span>
+                        <span className="text-gray-500">)</span>
+                    </>
+                ) : node.input && node.input.length >= 10 ? (
                     <span className="text-purple-300">{node.input.slice(0, 10)}</span>
-                )}
+                ) : null}
                 {node.value && node.value !== "0x0" && node.value !== "0" && (
                     <span className="text-yellow-300 ml-1">
                         {(Number(BigInt(node.value)) / 1e18).toFixed(4)} ETH

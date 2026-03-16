@@ -19,7 +19,16 @@ export function OpcodeTrace({ steps }: Props) {
     const step = steps[currentStep];
 
     if (!steps.length) {
-        return <div className="text-gray-500 text-sm py-4">No opcode trace available</div>;
+        return (
+            <div className="py-6 text-center space-y-2">
+                <p className="text-sm text-muted-foreground">No opcode trace available</p>
+                <p className="text-xs text-muted-foreground/70">
+                    Simple ETH transfers don&apos;t execute EVM opcodes.
+                    Traces are generated for transactions that interact with smart contracts
+                    (e.g. token transfers, contract calls, deployments).
+                </p>
+            </div>
+        );
     }
 
     const go = (n: number) => {

@@ -2,6 +2,19 @@ import { spawn, execSync, ChildProcess } from "child_process";
 import fs from "fs";
 import path from "path";
 
+/** Fetch the latest block number from an RPC endpoint via eth_blockNumber. */
+export async function fetchLatestBlock(rpcUrl: string): Promise<number> {
+    const res = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "eth_blockNumber", params: [], id: 1 }),
+    });
+    if (!res.ok) throw new Error(`Failed to fetch latest block: HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.error) throw new Error(`RPC error: ${json.error.message}`);
+    return parseInt(json.result, 16);
+}
+
 export interface AnvilConfig {
     chainId: number;
     port: number;
@@ -37,17 +50,22 @@ export function getAnvilState() {
     return state;
 }
 
-export function startAnvil(config: AnvilConfig): Promise<void> {
-    return new Promise((resolve, reject) => {
-        if (state.proc && !state.proc.killed) {
-            reject(new Error("Anvil is already running"));
-            return;
-        }
+export async function startAnvil(config: AnvilConfig): Promise<AnvilConfig> {
+    if (state.proc && !state.proc.killed) {
+        throw new Error("Anvil is already running");
+    }
 
+    // Auto-resolve fork block number to pin the fork and avoid excess RPC calls
+    if (config.forkUrl && !config.forkBlockNumber) {
+        const latestBlock = await fetchLatestBlock(config.forkUrl);
+        config = { ...config, forkBlockNumber: latestBlock };
+    }
+
+    return new Promise((resolve, reject) => {
         const args: string[] = [
             "--chain-id", String(config.chainId),
             "--port", String(config.port),
-            "--host", "127.0.0.1",
+            "--host", "0.0.0.0",
             "--accounts", String(config.accounts),
             "--balance", String(config.balance),
             "--block-time", String(config.blockTime),
@@ -61,6 +79,10 @@ export function startAnvil(config: AnvilConfig): Promise<void> {
             if (config.forkBlockNumber) {
                 args.push("--fork-block-number", String(config.forkBlockNumber));
             }
+            // Reduce RPC calls: skip storage slot re-verification
+            args.push("--no-storage-caching");
+            // Handle transient RPC failures gracefully
+            args.push("--retries", "5");
         }
 
         if (config.noMining) {
@@ -68,9 +90,11 @@ export function startAnvil(config: AnvilConfig): Promise<void> {
         }
 
         // Use a per-chainId state file so each chain's EVM state (deployed contracts,
-        // balances, nonces) is isolated. Fall back to chain-specific default if the
-        // user left the old generic path.
-        const defaultStateFile = `/tmp/anvil-state-${config.chainId}.json`;
+        // balances, nonces) is isolated. Fork and non-fork sessions use separate
+        // state files because fork state references mainnet block hashes that
+        // don't exist in a clean non-fork chain (causes "Best hash not found").
+        const forkSuffix = config.forkUrl ? "-fork" : "";
+        const defaultStateFile = `/tmp/anvil-state-${config.chainId}${forkSuffix}.json`;
         const stateFile =
             !config.stateFile || config.stateFile === "/tmp/anvil-devnet-state.json"
                 ? defaultStateFile
@@ -132,7 +156,7 @@ export function startAnvil(config: AnvilConfig): Promise<void> {
                 });
                 if (res.ok) {
                     clearInterval(interval);
-                    resolve();
+                    resolve(config);
                 }
             } catch {
                 // not ready yet

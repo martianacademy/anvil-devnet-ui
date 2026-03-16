@@ -15,14 +15,19 @@ export async function GET(
 
         // Fetch from anvil
         const port = getAnvilState().config?.port ?? 8545;
-        const jsonRpc = (method: string, params: unknown[]) =>
+        const jsonRpc = (method: string, rpcParams: unknown[]) =>
             fetch(`http://127.0.0.1:${port}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ jsonrpc: "2.0", method, params, id: Date.now() }),
+                body: JSON.stringify({ jsonrpc: "2.0", method, params: rpcParams, id: Date.now() }),
             }).then((r) => r.json());
 
-        const [callTraceRes, structLogsRes] = await Promise.all([
+        // Try both tracers independently — either can fail on fork RPCs
+        let callTrace = null;
+        let structLogs: unknown[] = [];
+        let traceError: string | null = null;
+
+        const [callTraceRes, structLogsRes] = await Promise.allSettled([
             jsonRpc("debug_traceTransaction", [hash, { tracer: "callTracer" }]),
             jsonRpc("debug_traceTransaction", [hash, {
                 disableStorage: false,
@@ -31,12 +36,34 @@ export async function GET(
             }]),
         ]);
 
-        const callTrace = callTraceRes.result ?? null;
-        const structLogs = structLogsRes.result?.structLogs ?? [];
+        if (callTraceRes.status === "fulfilled" && !callTraceRes.value.error) {
+            callTrace = callTraceRes.value.result ?? null;
+        }
 
-        saveTxTrace(hash, structLogs, callTrace);
-        return NextResponse.json({ structLogs, callTrace });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+        if (structLogsRes.status === "fulfilled" && !structLogsRes.value.error) {
+            structLogs = structLogsRes.value.result?.structLogs ?? [];
+        }
+
+        // If both failed, report the error
+        if (!callTrace && structLogs.length === 0) {
+            const err = structLogsRes.status === "fulfilled"
+                ? structLogsRes.value.error?.message
+                : "debug_traceTransaction failed";
+
+            if (err?.includes("not available") || err?.includes("Fork Error")) {
+                traceError = "Tracing unavailable: your fork RPC does not support debug_traceTransaction. Use a local chain or a paid RPC plan.";
+            } else {
+                traceError = err ?? "No trace data available for this transaction.";
+            }
+        }
+
+        const result = { structLogs, callTrace, traceError };
+        if (structLogs.length > 0 || callTrace) {
+            saveTxTrace(hash, structLogs, callTrace);
+        }
+        return NextResponse.json(result);
+    } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }
