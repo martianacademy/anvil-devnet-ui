@@ -138,7 +138,7 @@ export function Navbar() {
     const [drawerOpen, setDrawerOpen] = useState(false);
 
     return (
-        <nav className="sticky top-0 z-40 bg-background/80 backdrop-blur-md border-b border-border">
+        <nav className="sticky top-0 z-40 glass border-b border-border/50">
             <div className="flex items-center gap-3 max-w-7xl mx-auto px-3 h-12">
 
                 {/* Logo */}
@@ -154,8 +154,8 @@ export function Navbar() {
                         <Link
                             key={item.href}
                             href={item.href}
-                            className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${pathname === item.href
-                                ? "bg-accent text-primary"
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${pathname === item.href
+                                ? "bg-primary/15 text-primary shadow-sm shadow-primary/10"
                                 : "text-muted-foreground hover:text-foreground hover:bg-accent/60"
                                 }`}
                         >
@@ -204,7 +204,7 @@ export function Navbar() {
                     </button>
 
                     {showControls && (
-                        <div className="absolute right-0 top-10 z-50 w-80 max-w-[calc(100vw-1rem)] shadow-2xl rounded-2xl overflow-hidden">
+                        <div className="absolute right-0 top-10 z-50 w-80 max-w-[calc(100vw-1rem)] rounded-2xl overflow-hidden border border-border/50 shadow-[0_8px_32px_-4px_rgba(0,0,0,0.5)] backdrop-blur-xl">
                             <AnvilControls />
                         </div>
                     )}

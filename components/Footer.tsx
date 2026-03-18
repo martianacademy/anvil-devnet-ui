@@ -18,10 +18,10 @@ function CoffeeIcon({ className }: { className?: string }) {
 
 export function Footer() {
     return (
-        <footer className="mt-16 border-t border-border bg-background">
-            <div className="max-w-7xl mx-auto px-4 py-8 flex flex-col items-center gap-4">
-
-                {/* Built with heart */}
+        <footer className="mt-16 border-t border-border/50 bg-card/30 backdrop-blur-sm">
+            {/* Gradient line */}
+            <div className="h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
+            <div className="max-w-7xl mx-auto px-4 py-6 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <p className="text-sm text-muted-foreground flex items-center gap-1.5">
                     Built with{" "}
                     <span className="text-red-500 animate-pulse">♥</span>
@@ -37,17 +37,15 @@ export function Footer() {
                     </Link>
                 </p>
 
-                {/* Buy me a coffee */}
                 <Link
                     href="https://buymeacoffee.com/martianacademy"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-yellow-500/40 bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20 hover:border-yellow-500/60 transition-all text-sm font-medium"
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-yellow-500/30 bg-yellow-500/5 text-yellow-400 hover:bg-yellow-500/15 hover:border-yellow-500/50 transition-all text-sm font-medium hover-lift"
                 >
                     <CoffeeIcon className="w-4 h-4" />
                     Buy me a coffee
                 </Link>
-
             </div>
         </footer>
     );
