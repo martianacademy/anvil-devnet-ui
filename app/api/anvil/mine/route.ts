@@ -8,7 +8,7 @@ export async function POST(req: Request) {
         const blockHex = await rpc("eth_blockNumber", []) as string;
         const blockNumber = parseInt(blockHex, 16);
         return NextResponse.json({ success: true, blockNumber });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }

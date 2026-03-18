@@ -6,7 +6,7 @@ export async function POST() {
         const state = getAnvilState();
         await stopAnvil(state.config?.port);
         return NextResponse.json({ success: true });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }

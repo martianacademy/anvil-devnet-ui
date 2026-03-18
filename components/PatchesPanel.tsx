@@ -32,7 +32,7 @@ export function PatchesPanel() {
             const data = await res.json();
             if (data.error) throw new Error(data.error);
             setStatus(`✓ Funded successfully`);
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
     };
 
     const readSlot = async () => {
@@ -55,7 +55,7 @@ export function PatchesPanel() {
             if (data.error) throw new Error(data.error);
             setStatus("✓ Storage slot written");
             readSlot();
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
     };
 
     return (

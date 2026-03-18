@@ -50,7 +50,7 @@ export function TokenTracker() {
             setStatus("✓ Added to watchlist");
             setTokenAddr(""); setWalletAddr("");
             loadBalances();
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
     };
 
     const remove = async (id: number) => {
@@ -94,7 +94,7 @@ export function TokenTracker() {
                     <div className="flex gap-3 items-end">
                         <div className="space-y-1.5">
                             <Label className="text-muted-foreground text-xs">Type</Label>
-                            <Select value={tokenType} onValueChange={(v) => setTokenType(v as any)}>
+                            <Select value={tokenType} onValueChange={(v) => setTokenType(v as "ERC20" | "ERC721")}>
                                 <SelectTrigger className="h-9 w-28">
                                     <SelectValue />
                                 </SelectTrigger>

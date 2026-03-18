@@ -7,11 +7,11 @@ export async function GET() {
         return NextResponse.json(contracts.map((c) => ({
             address: c.address,
             name: c.name,
-            abiMethodCount: Array.isArray(c.abi) ? (c.abi as any[]).filter((x: any) => x.type === "function").length : 0,
+            abiMethodCount: Array.isArray(c.abi) ? (c.abi as unknown as Array<{ type: string }>).filter((x) => x.type === "function").length : 0,
             verified_at: c.verified_at,
         })));
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }
 
@@ -24,7 +24,7 @@ export async function POST(req: Request) {
         const parsedAbi = typeof abi === "string" ? JSON.parse(abi) : abi;
         saveContract(address, name, parsedAbi, source);
         return NextResponse.json({ success: true });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }

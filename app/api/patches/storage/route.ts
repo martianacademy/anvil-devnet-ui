@@ -16,8 +16,8 @@ export async function POST(req: Request) {
     `).run("storage_write", contract, JSON.stringify({ slot, value }), Date.now());
 
         return NextResponse.json({ success: true });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }
 
@@ -29,7 +29,7 @@ export async function GET(req: Request) {
         const port = getAnvilState().config?.port ?? 8545;
         const value = await readStorageSlot(contract, slot, port);
         return NextResponse.json({ value });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }

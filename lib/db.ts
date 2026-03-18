@@ -25,10 +25,10 @@ export function getDB(): Database.Database {
 
 function upgradeChainId(db: Database.Database) {
     // Only run against tables that ALREADY exist (fresh DBs are handled by CREATE TABLE below)
-    const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as any[]).map((r: any) => r.name);
+    const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map((r) => r.name);
 
     if (tables.includes("blocks")) {
-        const blockCols = (db.prepare("PRAGMA table_info(blocks)").all() as any[]).map((c: any) => c.name);
+        const blockCols = (db.prepare("PRAGMA table_info(blocks)").all() as { name: string }[]).map((c) => c.name);
         if (!blockCols.includes("chain_id")) {
             // Recreate blocks with composite PK, preserving old data under chainId 31337
             db.exec(`
@@ -52,7 +52,7 @@ function upgradeChainId(db: Database.Database) {
     }
 
     if (tables.includes("transactions")) {
-        const txCols = (db.prepare("PRAGMA table_info(transactions)").all() as any[]).map((c: any) => c.name);
+        const txCols = (db.prepare("PRAGMA table_info(transactions)").all() as { name: string }[]).map((c) => c.name);
         if (!txCols.includes("chain_id")) {
             db.exec(`ALTER TABLE transactions ADD COLUMN chain_id INTEGER NOT NULL DEFAULT 31337`);
             db.exec(`CREATE INDEX IF NOT EXISTS idx_tx_chain ON transactions(chain_id)`);

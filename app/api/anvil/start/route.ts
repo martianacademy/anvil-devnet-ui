@@ -13,7 +13,7 @@ export async function POST(req: Request) {
             port: resolvedConfig.port,
             forkBlockNumber: resolvedConfig.forkBlockNumber,
         });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }

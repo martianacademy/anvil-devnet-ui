@@ -10,8 +10,8 @@ export async function POST(req: Request) {
         const profile = await req.json();
         saveProfile(profile);
         return NextResponse.json({ success: true });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }
 
@@ -20,8 +20,8 @@ export async function DELETE(req: Request) {
         const { name } = await req.json();
         deleteProfile(name);
         return NextResponse.json({ success: true });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }
 
@@ -30,7 +30,7 @@ export async function PATCH(req: Request) {
         const { name } = await req.json();
         setActiveProfile(name);
         return NextResponse.json({ success: true });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }

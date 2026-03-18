@@ -36,14 +36,14 @@ export function EvmControls() {
                 body: JSON.stringify({ blocks: n }),
             }).then((r) => r.json());
             setStatus(`✓ Mined to block #${r.blockNumber}`);
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
     };
 
     const increaseTime = async (seconds: number) => {
         try {
             await rpc("increaseTime", seconds);
             setStatus(`✓ Advanced time by ${seconds}s`);
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
     };
 
     const setNextTs = async () => {
@@ -51,7 +51,7 @@ export function EvmControls() {
             const ts = new Date(timeValue).getTime() / 1000;
             await rpc("setNextBlockTimestamp", Math.floor(ts));
             setStatus(`✓ Next block timestamp set`);
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
     };
 
     const toggleAutomine = async (val: boolean) => {
@@ -59,7 +59,7 @@ export function EvmControls() {
             await rpc("setAutomine", val);
             setAutomine(val);
             setStatus(`✓ Automine: ${val ? "ON" : "OFF"}`);
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
     };
 
     const setZeroGas = async () => {
@@ -75,7 +75,7 @@ export function EvmControls() {
                 body: JSON.stringify({ jsonrpc: "2.0", method: "anvil_setMinGasPrice", params: ["0x0"], id: 1 }),
             });
             setStatus("✓ Zero gas mode enabled");
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
     };
 
     const startImpersonate = async () => {
@@ -87,7 +87,7 @@ export function EvmControls() {
             });
             setActiveImpersonation(impersonateAddr);
             setStatus(`✓ Impersonating ${impersonateAddr.slice(0, 10)}…`);
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
     };
 
     const stopImpersonate = async () => {
@@ -100,7 +100,7 @@ export function EvmControls() {
             });
             setActiveImpersonation(null);
             setStatus("✓ Stopped impersonation");
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
     };
 
     return (

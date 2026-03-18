@@ -33,14 +33,14 @@ export function saveContract(address: string, name: string, abi: Abi, source?: s
 
 export function getContract(address: string): ContractInfo | null {
     const db = getDB();
-    const row = db.prepare("SELECT * FROM contracts WHERE lower(address) = ?").get(address.toLowerCase()) as any;
+    const row = db.prepare("SELECT * FROM contracts WHERE lower(address) = ?").get(address.toLowerCase()) as { address: string; name: string; abi: string; source?: string; verified_at: number } | undefined;
     if (!row) return null;
     return { ...row, abi: JSON.parse(row.abi) };
 }
 
 export function getAllContracts(): ContractInfo[] {
     const db = getDB();
-    const rows = db.prepare("SELECT * FROM contracts ORDER BY verified_at DESC").all() as any[];
+    const rows = db.prepare("SELECT * FROM contracts ORDER BY verified_at DESC").all() as { address: string; name: string; abi: string; source?: string; verified_at: number }[];
     return rows.map((r) => ({ ...r, abi: JSON.parse(r.abi) }));
 }
 

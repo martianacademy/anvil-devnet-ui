@@ -5,9 +5,12 @@ import { setTokenBalance } from "@/lib/tokenBalances";
 import { writeStorageSlot } from "@/lib/patcher";
 import { getAnvilState } from "@/lib/anvilProcess";
 
+interface ScriptRow { id: number; name: string; ops: string; created_at: number }
+interface ScriptOp { type: string; address?: string; contract?: string; amount?: string; decimals?: number; token?: string; slot?: string; value?: string }
+
 export async function GET() {
     const db = getDB();
-    const scripts = db.prepare("SELECT * FROM patch_scripts ORDER BY created_at DESC").all() as any[];
+    const scripts = db.prepare("SELECT * FROM patch_scripts ORDER BY created_at DESC").all() as ScriptRow[];
     return NextResponse.json(scripts.map((s) => ({ ...s, ops: JSON.parse(s.ops) })));
 }
 
@@ -24,19 +27,19 @@ export async function POST(req: Request) {
         }
 
         if (action === "run") {
-            const row = db.prepare("SELECT * FROM patch_scripts WHERE id = ?").get(scriptId) as any;
+            const row = db.prepare("SELECT * FROM patch_scripts WHERE id = ?").get(scriptId) as ScriptRow | undefined;
             if (!row) return NextResponse.json({ error: "Script not found" }, { status: 404 });
-            const scriptOps = JSON.parse(row.ops) as any[];
+            const scriptOps = JSON.parse(row.ops) as ScriptOp[];
             const port = getAnvilState().config?.port ?? 8545;
 
             for (const op of scriptOps) {
                 if (op.type === "fund_native") {
-                    await fundNative(op.address, op.amount, port);
+                    await fundNative(op.address!, op.amount!, port);
                 } else if (op.type === "fund_erc20") {
-                    const amountBig = BigInt(Math.floor(parseFloat(op.amount) * 10 ** (op.decimals ?? 18)));
-                    await setTokenBalance(op.token, op.address, amountBig, port);
+                    const amountBig = BigInt(Math.floor(parseFloat(op.amount!) * 10 ** (op.decimals ?? 18)));
+                    await setTokenBalance(op.token!, op.address!, amountBig, port);
                 } else if (op.type === "storage_write") {
-                    await writeStorageSlot(op.contract, op.slot, op.value, port);
+                    await writeStorageSlot(op.contract!, op.slot!, op.value!, port);
                 }
                 db.prepare(`INSERT INTO patch_history (type, target_address, payload, applied_at) VALUES (?, ?, ?, ?)`)
                     .run(op.type, op.address ?? op.contract, JSON.stringify(op), Date.now());
@@ -50,7 +53,7 @@ export async function POST(req: Request) {
         }
 
         return NextResponse.json({ error: "Unknown action" }, { status: 400 });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }

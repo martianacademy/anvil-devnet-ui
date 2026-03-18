@@ -6,13 +6,22 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 
+interface SimResult {
+    success?: boolean;
+    error?: string;
+    gasEstimate?: string;
+    returnData?: string;
+    sstores?: { slot: string; value: string }[];
+    events?: { topics?: string[] }[];
+}
+
 export function CallSimulator() {
     const [to, setTo] = useState("");
     const [from, setFrom] = useState("");
     const [data, setData] = useState("");
     const [value, setValue] = useState("0");
     const [loading, setLoading] = useState(false);
-    const [result, setResult] = useState<any>(null);
+    const [result, setResult] = useState<SimResult | null>(null);
 
     const simulate = async () => {
         setLoading(true);
@@ -29,8 +38,8 @@ export function CallSimulator() {
                 }),
             });
             setResult(await res.json());
-        } catch (e: any) {
-            setResult({ error: e.message });
+        } catch (e: unknown) {
+            setResult({ error: e instanceof Error ? e.message : "Unknown error" });
         } finally {
             setLoading(false);
         }
@@ -89,7 +98,7 @@ export function CallSimulator() {
                         {result.sstores && result.sstores.length > 0 && (
                             <div>
                                 <p className="text-orange-400 font-semibold mb-1">Storage writes:</p>
-                                {result.sstores.map((s: any, i: number) => (
+                                {result.sstores.map((s, i) => (
                                     <p key={i} className="text-muted-foreground">
                                         slot[<span className="text-foreground">{s.slot}</span>] = <span className="text-yellow-400">{s.value}</span>
                                     </p>
@@ -99,7 +108,7 @@ export function CallSimulator() {
                         {result.events && result.events.length > 0 && (
                             <div>
                                 <p className="text-blue-400 font-semibold mb-1">Events emitted: {result.events.length}</p>
-                                {result.events.slice(0, 3).map((e: any, i: number) => (
+                                {result.events.slice(0, 3).map((e, i) => (
                                     <p key={i} className="text-muted-foreground truncate">{e.topics?.[0]?.slice(0, 18)}…</p>
                                 ))}
                             </div>

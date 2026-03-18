@@ -33,13 +33,13 @@ export function ChainProfileSelector() {
             });
             setStatus(`✓ Profile "${name}" activated`);
             load();
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
     };
 
     const loadPreset = async (presetName: string) => {
         try {
             const data = await fetch("/api/patches/profiles").then((r) => r.json());
-            const preset = data.presets?.find((p: any) => p.name === presetName);
+            const preset = data.presets?.find((p: { name: string }) => p.name === presetName);
             if (!preset) return;
             await fetch("/api/patches/profiles", {
                 method: "POST",
@@ -48,7 +48,7 @@ export function ChainProfileSelector() {
             });
             setStatus(`✓ Preset "${presetName}" saved`);
             load();
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
     };
 
     return (

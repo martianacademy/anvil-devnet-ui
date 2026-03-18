@@ -12,7 +12,7 @@ export async function POST(req: Request) {
         db.prepare("DELETE FROM snapshots WHERE id = ?").run(id);
 
         return NextResponse.json({ success: true });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }

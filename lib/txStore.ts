@@ -85,7 +85,7 @@ export function saveTxTrace(hash: string, structLogs: unknown, callTrace: unknow
 
 export function getTxTrace(hash: string) {
     const db = getDB();
-    const row = db.prepare("SELECT * FROM tx_traces WHERE hash = ?").get(hash) as any;
+    const row = db.prepare("SELECT * FROM tx_traces WHERE hash = ?").get(hash) as { struct_logs: string; call_trace: string } | undefined;
     if (!row) return null;
     return {
         structLogs: JSON.parse(row.struct_logs),

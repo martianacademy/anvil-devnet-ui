@@ -3,12 +3,14 @@ import { getDB } from "@/lib/db";
 import { fetchTokenBalance } from "@/lib/tokenBalances";
 import { getAnvilState } from "@/lib/anvilProcess";
 
+interface WatchlistRow { id: number; token_address: string; wallet_address: string; token_name?: string; token_symbol?: string; token_decimals: number; token_type: string }
+
 export const dynamic = "force-dynamic";
 
 export async function GET() {
     try {
         const db = getDB();
-        const watchlist = db.prepare("SELECT * FROM token_watchlist ORDER BY added_at DESC").all() as any[];
+        const watchlist = db.prepare("SELECT * FROM token_watchlist ORDER BY added_at DESC").all() as WatchlistRow[];
         const port = getAnvilState().config?.port ?? 8545;
 
         const balances = await Promise.all(
@@ -19,7 +21,7 @@ export async function GET() {
         );
 
         return NextResponse.json(balances);
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }

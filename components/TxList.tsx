@@ -59,7 +59,7 @@ export function TxList() {
             .then((d) => {
                 if (Array.isArray(d.result)) {
                     addTransactions(
-                        (d.result as any[]).map((tx) => ({
+                        (d.result as TxSummary[]).map((tx) => ({
                             hash: tx.hash,
                             block_number: tx.block_number,
                             block_timestamp: tx.block_timestamp,

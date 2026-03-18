@@ -4,6 +4,9 @@ import { getAnvilState } from "@/lib/anvilProcess";
 
 export const dynamic = "force-dynamic";
 
+interface ContractRow { abi: string; name?: string; source?: string }
+interface BlockRow { number: number }
+
 const ok = (result: unknown) =>
     NextResponse.json({ status: "1", message: "OK", result });
 const err = (msg: string) =>
@@ -127,14 +130,14 @@ export async function GET(req: NextRequest) {
         if (module === "contract") {
             if (action === "getabi") {
                 const address = (p.get("address") ?? "").toLowerCase();
-                const row = db.prepare("SELECT abi FROM contracts WHERE lower(address)=?").get(address) as any;
+                const row = db.prepare("SELECT abi FROM contracts WHERE lower(address)=?").get(address) as ContractRow | undefined;
                 if (!row) return err("Contract source code not verified.");
                 return ok(row.abi);
             }
 
             if (action === "getsourcecode") {
                 const address = (p.get("address") ?? "").toLowerCase();
-                const row = db.prepare("SELECT * FROM contracts WHERE lower(address)=?").get(address) as any;
+                const row = db.prepare("SELECT * FROM contracts WHERE lower(address)=?").get(address) as ContractRow | undefined;
                 if (!row) return ok([{ SourceCode: "", ABI: "Contract source code not verified.", ContractName: "", CompilerVersion: "", OptimizationUsed: "0" }]);
                 return ok([{
                     SourceCode: row.source ?? "",
@@ -181,7 +184,7 @@ export async function GET(req: NextRequest) {
             const ts = parseInt(p.get("timestamp") ?? "0");
             const closest = p.get("closest") ?? "before";
             const op = closest === "before" ? "<=" : ">=";
-            const row = db.prepare(`SELECT number FROM blocks WHERE chain_id = ? AND timestamp ${op} ? ORDER BY timestamp DESC LIMIT 1`).get(chainId, ts) as any;
+            const row = db.prepare(`SELECT number FROM blocks WHERE chain_id = ? AND timestamp ${op} ? ORDER BY timestamp DESC LIMIT 1`).get(chainId, ts) as BlockRow | undefined;
             return row ? ok(row.number.toString()) : err("No block found");
         }
 
@@ -213,8 +216,8 @@ export async function GET(req: NextRequest) {
             const result = await rpcCall(method, params);
             return ok(result);
         }
-    } catch (e: any) {
-        return err(e.message);
+    } catch (e: unknown) {
+        return err(e instanceof Error ? e.message : "Unknown error");
     }
 
     return err(`Unknown module/action: ${module}/${action}`);

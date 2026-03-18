@@ -9,6 +9,14 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
+interface BlockTx { hash: string; from: string; to?: string; value: string; gas?: string }
+interface BlockData {
+    number: string; hash: string; parentHash: string; timestamp: string;
+    gasUsed: string; gasLimit: string; baseFeePerGas?: string;
+    miner?: string; difficulty?: string; extraData?: string;
+    transactions?: BlockTx[];
+}
+
 function CopyBtn({ text }: { text: string }) {
     const [copied, setCopied] = useState(false);
     return (
@@ -63,7 +71,7 @@ export default function BlockDetailPage() {
     const numStr = params.number as string;
     const blockNum = /^\d+$/.test(numStr) ? `0x${parseInt(numStr, 10).toString(16)}` : numStr;
 
-    const [block, setBlock] = useState<any>(null);
+    const [block, setBlock] = useState<BlockData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -119,7 +127,7 @@ export default function BlockDetailPage() {
         );
     }
 
-    const txs: any[] = block.transactions ?? [];
+    const txs: BlockTx[] = block.transactions ?? [];
     const ts = parseHex(block.timestamp);
     const timeStr = ts ? new Date(ts * 1000).toLocaleString() : "—";
     const baseFeeGwei = block.baseFeePerGas
@@ -249,7 +257,7 @@ export default function BlockDetailPage() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {txs.map((tx: any, i: number) => (
+                                {txs.map((tx, i) => (
                                     <tr key={tx.hash ?? i} className="border-b border-border/30 last:border-0 hover:bg-muted/30 transition-colors">
                                         <td className="px-5 py-2.5">
                                             <Link href={`/tx/${tx.hash}`} className="text-primary hover:underline inline-flex items-center gap-1">

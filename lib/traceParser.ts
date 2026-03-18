@@ -31,15 +31,15 @@ export interface StorageDiff {
 
 export function parseStructLogs(raw: unknown): EvmStep[] {
     if (!Array.isArray(raw)) return [];
-    return raw.map((step: any) => ({
-        pc: step.pc,
-        op: step.op,
-        gas: step.gas,
-        gasCost: step.gasCost,
-        depth: step.depth ?? 1,
-        stack: step.stack ?? [],
-        memory: step.memory ?? [],
-        storage: step.storage ?? {},
+    return raw.map((step: Record<string, unknown>) => ({
+        pc: step.pc as number,
+        op: step.op as string,
+        gas: step.gas as number,
+        gasCost: step.gasCost as number,
+        depth: (step.depth as number) ?? 1,
+        stack: (step.stack as string[]) ?? [],
+        memory: (step.memory as string[]) ?? [],
+        storage: (step.storage as Record<string, string>) ?? {},
     }));
 }
 

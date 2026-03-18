@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAnvilState } from "@/lib/anvilProcess";
 
+interface StructStep { op: string; stack?: string[] }
+
 export async function POST(req: Request) {
     try {
         const { to, from, data, value = "0x0" } = await req.json();
@@ -43,8 +45,8 @@ export async function POST(req: Request) {
                 const traceResult = await jsonRpc("debug_traceTransaction", [txHash, { disableStorage: false }]);
                 const steps = traceResult.result?.structLogs ?? [];
                 sstores = steps
-                    .filter((s: any) => s.op === "SSTORE")
-                    .map((s: any) => ({
+                    .filter((s: StructStep) => s.op === "SSTORE")
+                    .map((s: StructStep) => ({
                         slot: s.stack?.[s.stack.length - 1] ?? "?",
                         value: s.stack?.[s.stack.length - 2] ?? "?",
                     }));
@@ -66,7 +68,7 @@ export async function POST(req: Request) {
             sstores,
             events,
         });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }

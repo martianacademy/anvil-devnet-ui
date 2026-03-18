@@ -27,14 +27,14 @@ export function saveProfile(profile: ChainProfile): void {
 
 export function getProfile(name: string): ChainProfile | null {
     const db = getDB();
-    const row = db.prepare("SELECT * FROM chain_profiles WHERE name = ?").get(name) as any;
+    const row = db.prepare("SELECT * FROM chain_profiles WHERE name = ?").get(name) as { id: number; config: string; is_active: number } | undefined;
     if (!row) return null;
     return { ...JSON.parse(row.config), id: row.id, is_active: row.is_active };
 }
 
 export function getAllProfiles(): ChainProfile[] {
     const db = getDB();
-    const rows = db.prepare("SELECT * FROM chain_profiles ORDER BY created_at DESC").all() as any[];
+    const rows = db.prepare("SELECT * FROM chain_profiles ORDER BY created_at DESC").all() as { id: number; config: string; is_active: number }[];
     return rows.map((r) => ({ ...JSON.parse(r.config), id: r.id, is_active: r.is_active }));
 }
 

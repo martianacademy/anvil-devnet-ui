@@ -19,8 +19,8 @@ export async function POST(req: Request) {
     `).run(id, label ?? `Snapshot ${id}`, blockNumber, Date.now());
 
         return NextResponse.json({ id, label, blockNumber });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }
 
@@ -29,7 +29,7 @@ export async function GET() {
         const db = getDB();
         const snapshots = db.prepare("SELECT * FROM snapshots ORDER BY created_at DESC").all();
         return NextResponse.json(snapshots);
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
     }
 }

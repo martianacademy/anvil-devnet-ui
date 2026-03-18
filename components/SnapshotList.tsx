@@ -41,7 +41,7 @@ export function SnapshotList() {
             setLabel("");
             setStatus("✓ Snapshot taken");
             load();
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
         finally { setLoading(false); }
     };
 
@@ -54,7 +54,7 @@ export function SnapshotList() {
             });
             setStatus(`✓ Reverted to snapshot ${id}`);
             load();
-        } catch (e: any) { setStatus(`Error: ${e.message}`); }
+        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
     };
 
     return (

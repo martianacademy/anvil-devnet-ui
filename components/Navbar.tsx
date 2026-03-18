@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRef, useState, useEffect } from "react";
 import { Menu, Settings2, Zap, Github } from "lucide-react";
-import { useDevnetStore } from "@/store/useDevnetStore";
+import { useDevnetStore, type TxSummary } from "@/store/useDevnetStore";
 import { AnvilControls } from "@/components/AnvilControls";
 import {
     Sheet,
@@ -50,7 +50,7 @@ export function Navbar() {
             .then((d) => {
                 if (Array.isArray(d.result)) {
                     addTransactions(
-                        (d.result as any[]).map((tx) => ({
+                        (d.result as TxSummary[]).map((tx) => ({
                             hash: tx.hash,
                             block_number: tx.block_number,
                             block_timestamp: tx.block_timestamp,
