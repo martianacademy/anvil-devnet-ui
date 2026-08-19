@@ -1,68 +1,42 @@
-"use client";
+/**
+ * The control plane is headless: its UI now lives inside the Blockscout frontend
+ * fork at http://localhost:3000/devnet. This page is only a signpost for anyone
+ * who opens the API port directly.
+ */
+const EXPLORER_URL = process.env.NEXT_PUBLIC_EXPLORER_URL ?? "http://localhost:3000";
 
-import { useDevnetStore } from "@/store/useDevnetStore";
-import { useProjectStore } from "@/store/useProjectStore";
-import { HeroSection, StatsBar, LatestBlocks, LatestTransactions } from "@/components/Dashboard";
-import { explorer } from "@/lib/apiClient";
-import { useAsyncData } from "@/lib/hooks";
-import { formatGwei } from "@/lib/format";
+const ENDPOINTS = [
+  ["GET  /api/anvil/status", "node status, chain id, block height"],
+  ["POST /api/anvil/start | /stop | /reset", "process control"],
+  ["POST /api/anvil/mine | /time | /impersonate", "EVM control"],
+  ["GET|POST /api/anvil/snapshot, POST /api/anvil/revert", "snapshots"],
+  ["POST /api/patches/fund | /storage | /scripts", "state patches"],
+  ["POST /api/simulate", "dry-run a call inside a reverted snapshot"],
+  ["GET  /api/tx/{hash} | /api/tx/{hash}/trace", "transaction + debug trace"],
+  ["GET|POST /api/projects", "multi-devnet projects"],
+  ["GET  /api/explorer?module=…", "Etherscan-compatible read API"],
+  ["GET  /api/stream", "SSE block/transaction feed"],
+];
 
-interface BlockRow {
-  number: number;
-  hash: string;
-  timestamp: number;
-  txCount: number;
-  gasUsed: string;
-}
-
-const BLOCKS_SHOWN = 6;
-
-export default function DashboardPage() {
-  const { nodeStatus, latestBlock, chainId, port, transactions, gasPrice, lanIp } = useDevnetStore();
-  const activeProjectId = useProjectStore((s) => s.activeProjectId);
-
-  const localRpcUrl = `http://127.0.0.1:${port}`;
-  const lanRpcUrl = lanIp ? `http://${lanIp}:${port}` : null;
-
-  // Node status is polled by the navbar; this only refreshes the two feed cards,
-  // re-running whenever the tip advances or the target chain/project changes.
-  const { data, loading } = useAsyncData(
-    async () => {
-      if (nodeStatus !== "running") return { blocks: [] as BlockRow[], txTotal: null as number | null };
-      const [blockList, txList] = await Promise.all([
-        explorer<BlockRow[]>(`module=block&action=getblocklist&page=1&offset=${BLOCKS_SHOWN}`, []),
-        explorer<unknown[]>("module=tx&action=getrecentlist&limit=1", []),
-      ]);
-      return { blocks: blockList.result, txTotal: txList.total };
-    },
-    [nodeStatus, chainId, latestBlock, activeProjectId],
-    { blocks: [] as BlockRow[], txTotal: null as number | null }
-  );
-
+export default function ControlApiHome() {
   return (
-    <div className="min-h-screen bg-background">
-      <HeroSection
-        chainId={chainId}
-        port={port}
-        localRpcUrl={localRpcUrl}
-        lanRpcUrl={lanRpcUrl}
-        nodeStatus={nodeStatus}
-      />
-      <StatsBar
-        latestBlock={latestBlock}
-        txCount={data.txTotal ?? transactions.length}
-        gasPrice={gasPrice ? formatGwei(gasPrice) : "—"}
-        nodeStatus={nodeStatus}
-      />
-      <div className="max-w-5xl mx-auto px-4 py-6 grid grid-cols-1 md:grid-cols-2 gap-5">
-        <LatestBlocks blocks={data.blocks} nodeStatus={nodeStatus} loading={loading} />
-        <LatestTransactions transactions={transactions} nodeStatus={nodeStatus} loading={loading} />
-      </div>
-      {activeProjectId && (
-        <p className="max-w-5xl mx-auto px-4 pb-6 text-[11px] font-mono text-muted-foreground">
-          Scoped to project <span className="text-primary">{activeProjectId}</span>
-        </p>
-      )}
-    </div>
+    <main style={{ maxWidth: 720, margin: "0 auto", padding: "48px 24px", fontFamily: "var(--font-geist-mono), monospace" }}>
+      <h1 style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>Anvil DevNet Control API</h1>
+      <p style={{ opacity: 0.7, marginBottom: 24, lineHeight: 1.6 }}>
+        Headless service. The user interface lives in the Blockscout explorer at{" "}
+        <a href={`${EXPLORER_URL}/devnet`} style={{ textDecoration: "underline" }}>
+          {EXPLORER_URL}/devnet
+        </a>
+        .
+      </p>
+      <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 10 }}>
+        {ENDPOINTS.map(([route, description]) => (
+          <li key={route} style={{ display: "grid", gap: 2 }}>
+            <code style={{ fontSize: 12 }}>{route}</code>
+            <span style={{ fontSize: 12, opacity: 0.6 }}>{description}</span>
+          </li>
+        ))}
+      </ul>
+    </main>
   );
 }

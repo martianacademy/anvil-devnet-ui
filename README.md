@@ -1,8 +1,20 @@
-# Anvil DevNet UI
+# Anvil DevNet Control API
 
-A self-hosted, full-stack local blockchain explorer and EVM debugger — like Tenderly or BuildBear, but for your local [Anvil](https://book.getfoundry.sh/anvil/) node.
+The headless control plane for a local [Anvil](https://book.getfoundry.sh/anvil/) devnet:
+process control, EVM manipulation, state patches, call simulation, multi-project devnets,
+and an Etherscan-compatible read API over its own SQLite index.
 
-Built with **Next.js 16**, **viem**, **SQLite** (via Node's built-in `node:sqlite` — no native modules to compile), **shadcn/ui**, and **Zustand**. All state is local, all data is yours.
+**There is no UI in this package.** It lives in the Blockscout frontend fork under
+`/devnet` — see [`../README.md`](../README.md) for the full stack, or run `../devnet.sh up`.
+
+```
+Blockscout frontend fork  :3000   ── /devnet/*  ──►  this API  :3010  ──►  anvil  :8546
+        │                                                                     ▲
+        └── blocks / txs / addresses ──► Blockscout backend :80 ──────────────┘
+```
+
+Built with **Next.js 16**, **viem**, and **SQLite** via Node's built-in `node:sqlite`
+(no native modules to compile). All state is local, all data is yours.
 
 ---
 
@@ -10,21 +22,16 @@ Built with **Next.js 16**, **viem**, **SQLite** (via Node's built-in `node:sqlit
 
 | Feature                     | Description                                                                            |
 | --------------------------- | -------------------------------------------------------------------------------------- |
-| **Process Control**         | Start / stop Anvil from the UI with full config (port, chain ID, fork URL, block time) |
-| **Live Transaction Stream** | SSE-powered real-time transaction feed, persisted to SQLite                            |
-| **EVM Debugger**            | Step through opcodes with stack, memory, and storage panels                            |
-| **Call Tree**               | Visualise nested CALL / DELEGATECALL / STATICCALL traces                               |
-| **Storage Diff**            | Before/after view of every SSTORE in a transaction                                     |
-| **ABI Registry**            | Upload ABI + source, or auto-fetch from Sourcify                                       |
-| **Block Explorer**          | Browse blocks and transactions with a BSCScan-compatible REST API                      |
-| **Accounts**                | List all Anvil accounts with live balances; fund any address in one click              |
-| **EVM Control Panel**       | Time travel, manual mining, impersonation, zero-gas mode, interval mining              |
-| **State Patches**           | Fund native ETH, fund ERC-20 tokens, read/write arbitrary storage slots                |
-| **Chain Profiles**          | Save and switch between fork configs (presets: Ethereum, BSC, opBNB, Local)            |
-| **Token Tracker**           | Watch ERC-20 balances across multiple addresses with 3 s auto-refresh                  |
-| **Call Simulator**          | Dry-run `eth_call` without touching chain state (snapshot/revert under the hood)       |
-| **EVM Snapshots**           | Take/revert named EVM snapshots from the EVM panel                                     |
-| **Projects**                | Run several isolated devnets side by side, each with its own port, chain and history   |
+| **Process Control**         | Start / stop Anvil with full config (port, chain ID, fork URL, block time)              |
+| **Live Indexer**            | SSE-powered block/transaction stream, persisted to SQLite                               |
+| **Trace API**               | `debug_traceTransaction` output (opcodes + call tree) for the devnet debugger           |
+| **ABI Registry**            | Upload ABI + source, or auto-fetch from Sourcify / Etherscan V2                         |
+| **EVM Control**             | Time travel, manual mining, impersonation, zero-gas mode, interval mining               |
+| **State Patches**           | Fund native ETH, fund ERC-20 tokens, read/write arbitrary storage slots                 |
+| **Chain Profiles**          | Save and switch between fork configs (presets: Ethereum, BSC, opBNB, Local)             |
+| **Call Simulator**          | Dry-run a call without touching chain state (snapshot/revert under the hood)            |
+| **EVM Snapshots**           | Take/revert named EVM snapshots                                                         |
+| **Projects**                | Run several isolated devnets side by side, each with its own port, chain and history    |
 
 ---
 
@@ -39,6 +46,9 @@ Built with **Next.js 16**, **viem**, **SQLite** (via Node's built-in `node:sqlit
 
 | Variable            | Purpose                                                                     |
 | ------------------- | --------------------------------------------------------------------------- |
+| `DEVNET_API_PORT`   | Port this API listens on (default `3010`)                                    |
+| `DEVNET_RPC_PORT`   | Anvil port to manage when no project is running (default `8545`)             |
+| `DEVNET_CHAIN_ID`   | Chain id assumed before a node is started (default `31337`)                  |
 | `ETHERSCAN_API_KEY` | Enables ABI auto-fetch from Etherscan V2 (multichain). Sourcify needs no key |
 | `DEVNET_DB_PATH`    | Move the SQLite file somewhere other than `./devnet.db`                      |
 
@@ -47,19 +57,24 @@ Built with **Next.js 16**, **viem**, **SQLite** (via Node's built-in `node:sqlit
 ## Quick Start
 
 ```bash
-# Clone / enter the project
 cd anvil-devnet-ui
-
-# Install dependencies
 bun install
 
-# Start dev server
-bun dev
+# Headless API on :3010, managing an anvil on :8546
+DEVNET_API_PORT=3010 DEVNET_RPC_PORT=8546 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Then open the explorer UI at [http://localhost:3000/devnet](http://localhost:3000/devnet), or drive
+the API directly:
 
-Click **Start Anvil** on the dashboard — the UI will spawn a local node and begin streaming blocks automatically.
+```bash
+curl -X POST http://localhost:3010/api/anvil/start \
+  -H "Content-Type: application/json" \
+  -d '{ "port": 8546, "chainId": 31337, "accounts": 10, "balance": 10000 }'
+```
+
+To bring up the whole stack (Blockscout + this API + the explorer UI) in one go, use
+`../devnet.sh up` from the workspace root.
 
 ---
 
@@ -68,31 +83,19 @@ Click **Start Anvil** on the dashboard — the UI will spawn a local node and be
 ```
 anvil-devnet-ui/
 ├── app/
-│   ├── page.tsx                  # Dashboard
-│   ├── layout.tsx                # Root layout (dark theme, Navbar)
-│   ├── tx/[hash]/page.tsx        # Transaction detail + EVM debugger
-│   ├── blocks/page.tsx           # Block explorer
-│   ├── contracts/page.tsx        # ABI registry
-│   ├── contracts/[address]/      # Contract detail (ABI / Txs / Source)
-│   ├── accounts/page.tsx         # Account list + fund form
-│   ├── evm/page.tsx              # EVM control panel
-│   ├── patches/page.tsx          # State patches + chain profiles
-│   ├── tokens/page.tsx           # ERC-20 token tracker
-│   ├── simulate/page.tsx         # Call simulator
-│   ├── projects/page.tsx         # Multi-devnet project manager
-│   ├── accounts/[address]/       # Address detail (balance, code, tx history)
+│   ├── page.tsx                  # API signpost (no UI — see the Blockscout fork)
+│   ├── layout.tsx                # Minimal root layout
 │   └── api/                      # All API routes
-│       ├── anvil/                # start / stop / status / snapshot …
-│       ├── explorer/             # BSCScan-compatible REST API
-│       ├── tx/[hash]/            # Transaction + trace
+│       ├── anvil/                # start / stop / status / snapshot / mine / time …
+│       ├── explorer/             # Etherscan-compatible REST API
+│       ├── tx/[hash]/            # Transaction + debug trace (feeds the debugger)
 │       ├── contracts/            # ABI registry CRUD
 │       ├── patches/              # fund / storage / profiles / scripts
 │       ├── tokens/               # ERC-20 watchlist
-│       ├── simulate/             # eth_call dry-run
+│       ├── simulate/             # call dry-run
 │       ├── projects/             # Multi-devnet CRUD + start/stop
 │       ├── stream/               # SSE live feed
 │       └── rpc/                  # Raw JSON-RPC proxy
-├── components/                   # All UI components
 ├── lib/
 │   ├── db.ts                     # Schema + migrations (WAL mode, 11 tables)
 │   ├── sqlite.ts                 # Thin node:sqlite adapter (prepared-statement cache)
@@ -100,7 +103,6 @@ anvil-devnet-ui/
 │   ├── anvilProcess.ts           # Spawn / kill anvil process
 │   ├── txStore.ts                # Block / tx / trace persistence
 │   ├── abiRegistry.ts            # ABI storage, decode, Sourcify fetch
-│   ├── traceParser.ts            # Parse structLogs → EvmStep[], CallNode
 │   ├── patcher.ts                # fundNative, fundERC20, writeStorage
 │   ├── tokenBalances.ts          # ERC-20 balance fetcher + slot detect
 │   ├── chainProfiles.ts          # Fork profile save/load
@@ -108,14 +110,7 @@ anvil-devnet-ui/
 │   ├── activeProject.ts          # Which node does this request target?
 │   ├── indexer.ts                # RPC block/tx → DB row mapping
 │   ├── validate.ts               # Input validators (400 instead of 500)
-│   ├── route.ts                  # Uniform route error handling
-│   ├── apiClient.ts              # Browser fetch wrapper (project-scoped)
-│   ├── format.ts                 # Shared display formatting
-│   ├── hooks.ts                  # useAsyncData / usePolling / useCopy
-│   └── decoder.ts                # Decode tx input via ABI
-├── store/
-│   ├── useDevnetStore.ts         # Zustand global state
-│   └── useProjectStore.ts        # Projects + active project selection
+│   └── route.ts                  # Uniform route error handling
 ├── tests/                        # node --test unit tests
 └── scripts/
     └── resetDb.ts                # Wipe SQLite database (and, with --all, Anvil state)
@@ -460,8 +455,7 @@ Add ERC-20 contracts and wallet addresses to the **Token Tracker**. Balances ref
 | ---------- | ------------------------------------- |
 | Framework  | Next.js 16.1 (App Router, Turbopack)  |
 | Language   | TypeScript 5                          |
-| UI         | shadcn/ui + Tailwind CSS v4           |
-| State      | Zustand v5                            |
+| UI         | none — served by the Blockscout frontend fork |
 | RPC Client | viem v2                               |
 | Database   | `node:sqlite` (WAL mode, no native build) |
 | Realtime   | Server-Sent Events (SSE)              |

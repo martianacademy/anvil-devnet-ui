@@ -1,7 +1,11 @@
 import type { NextConfig } from "next";
 
+/**
+ * Headless control plane: no UI, so no React Compiler or Tailwind pipeline.
+ * CORS stays open on the Etherscan-compatible endpoint because external tools
+ * (Foundry, Hardhat, dApps) point at it directly.
+ */
 const nextConfig: NextConfig = {
-  reactCompiler: true,
   async headers() {
     return [
       {
