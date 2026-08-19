@@ -5,6 +5,9 @@ import { usePathname } from "next/navigation";
 import { useRef, useState, useEffect } from "react";
 import { Menu, Settings2, Zap, Github } from "lucide-react";
 import { useDevnetStore, type TxSummary } from "@/store/useDevnetStore";
+import { useProjectStore } from "@/store/useProjectStore";
+import { api, explorer, withProject } from "@/lib/apiClient";
+import { usePolling } from "@/lib/hooks";
 import { AnvilControls } from "@/components/AnvilControls";
 import {
     Sheet,
@@ -16,6 +19,7 @@ import {
 
 const NAV_ITEMS = [
     { href: "/", label: "Dashboard" },
+    { href: "/projects", label: "Projects" },
     { href: "/blocks", label: "Blocks" },
     { href: "/transactions", label: "Transactions" },
     { href: "/accounts", label: "Accounts" },
@@ -26,6 +30,18 @@ const NAV_ITEMS = [
     { href: "/simulate", label: "Simulate" },
 ];
 
+const STATUS_POLL_MS = 4000;
+
+interface NodeStatusResponse {
+    running: boolean;
+    blockNumber: number;
+    chainId: number | null;
+    port: number;
+    gasPrice: string | null;
+    lanIp: string | null;
+    config: Record<string, unknown> | null;
+}
+
 const statusDotClass: Record<string, string> = {
     running: "bg-green-400 shadow-[0_0_6px_2px_rgba(74,222,128,0.7)] animate-pulse",
     starting: "bg-yellow-400 shadow-[0_0_6px_2px_rgba(250,204,21,0.7)] animate-pulse",
@@ -35,38 +51,61 @@ const statusDotClass: Record<string, string> = {
 
 export function Navbar() {
     const pathname = usePathname();
-    const { nodeStatus, chainId, port, addTransactions, setLatestBlock } = useDevnetStore();
+    const {
+        nodeStatus, chainId, port, addTransactions, setLatestBlock, clearTransactions,
+        setNodeStatus, setChainId, setPort, setNodeConfig, setNetworkInfo,
+    } = useDevnetStore();
+    const activeProjectId = useProjectStore((s) => s.activeProjectId);
+
+    // The navbar is mounted on every page, so node status is polled here rather
+    // than on the dashboard — otherwise every other page thinks the node is down.
+    usePolling(async () => {
+        const status = await api.get<NodeStatusResponse>("/api/anvil/status").catch(() => null);
+        if (!status) {
+            if (useDevnetStore.getState().nodeStatus !== "starting") setNodeStatus("stopped");
+            return;
+        }
+        setNetworkInfo({ gasPrice: status.gasPrice, lanIp: status.lanIp });
+        if (!status.running) {
+            if (useDevnetStore.getState().nodeStatus !== "starting") setNodeStatus("stopped");
+            return;
+        }
+        setNodeStatus("running");
+        setLatestBlock(status.blockNumber ?? 0);
+        if (status.chainId) setChainId(status.chainId);
+        if (status.port) setPort(status.port);
+        if (status.config) setNodeConfig(status.config);
+    }, STATUS_POLL_MS);
 
     // ── Global SSE connection ─────────────────────────────────────────────────
     // Navbar is always mounted on every page, so this is the right place to own
     // the SSE stream that records blocks + transactions into the DB/store.
     const eventSourceRef = useRef<EventSource | null>(null);
 
-    // Hydrate store from DB whenever Anvil starts (or chainId switches)
+    // Hydrate the store from the indexed history whenever the node starts,
+    // the chain switches, or the active project changes.
     useEffect(() => {
         if (nodeStatus !== "running") return;
-        fetch(`/api/explorer?module=tx&action=getrecentlist&limit=200`)
-            .then((r) => r.json())
-            .then((d) => {
-                if (Array.isArray(d.result)) {
-                    addTransactions(
-                        (d.result as TxSummary[]).map((tx) => ({
-                            hash: tx.hash,
-                            block_number: tx.block_number,
-                            block_timestamp: tx.block_timestamp,
-                            from_address: tx.from_address,
-                            to_address: tx.to_address,
-                            value: tx.value,
-                            gas_used: tx.gas_used,
-                            status: tx.status,
-                            decoded_function: tx.decoded_function,
-                            input: tx.input,
-                        }))
-                    );
-                }
-            })
-            .catch(() => { });
-    }, [nodeStatus, chainId]);
+        let cancelled = false;
+        void (async () => {
+            const { result } = await explorer<TxSummary[]>("module=tx&action=getrecentlist&limit=200", []);
+            if (cancelled || !Array.isArray(result)) return;
+            addTransactions(result.map((tx) => ({
+                hash: tx.hash,
+                block_number: tx.block_number,
+                block_timestamp: tx.block_timestamp,
+                from_address: tx.from_address,
+                to_address: tx.to_address,
+                value: tx.value,
+                gas_used: tx.gas_used,
+                status: tx.status,
+                decoded_function: tx.decoded_function,
+                input: tx.input,
+            })));
+        })();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [nodeStatus, chainId, activeProjectId]);
 
     // Open SSE stream — writes blocks+txs to DB and updates store live
     useEffect(() => {
@@ -75,19 +114,25 @@ export function Navbar() {
             eventSourceRef.current = null;
             return;
         }
-        // Already open
-        if (eventSourceRef.current) return;
+        // Reopen on project switch so the stream follows the selected node.
+        eventSourceRef.current?.close();
 
-        const es = new EventSource("/api/stream");
+        const es = new EventSource(withProject("/api/stream"));
         eventSourceRef.current = es;
 
         es.onmessage = (e) => {
             const data = JSON.parse(e.data);
-            if (data.type === "tx") {
+            if (data.type === "reset") {
+                // The node restarted or the chain was reset — drop stale rows.
+                clearTransactions();
+                setLatestBlock(data.blockNumber ?? 0);
+            } else if (data.type === "status") {
+                if (typeof data.blockNumber === "number") setLatestBlock(data.blockNumber);
+            } else if (data.type === "tx") {
                 addTransactions([{
                     hash: data.hash,
                     block_number: data.blockNumber,
-                    block_timestamp: Date.now() / 1000,
+                    block_timestamp: data.blockTimestamp ?? Math.floor(Date.now() / 1000),
                     from_address: data.from,
                     to_address: data.to,
                     value: data.value,
@@ -110,7 +155,8 @@ export function Navbar() {
             es.close();
             eventSourceRef.current = null;
         };
-    }, [nodeStatus]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [nodeStatus, activeProjectId]);
     // ─────────────────────────────────────────────────────────────────────────
 
     // Anvil Controls popover

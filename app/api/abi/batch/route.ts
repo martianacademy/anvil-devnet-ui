@@ -1,29 +1,24 @@
-import { NextResponse } from "next/server";
 import { batchFetchABIs } from "@/lib/abiRegistry";
-import { getAnvilState } from "@/lib/anvilProcess";
+import { resolveFromRequest } from "@/lib/activeProject";
+import { ValidationError } from "@/lib/validate";
+import { handleRoute } from "@/lib/route";
+
+const MAX_ADDRESSES = 100;
 
 /**
- * POST /api/abi/batch
- * Body: { addresses: string[] }
- * Returns: { abis: Record<address, ABI[]> }
- *
- * Looks up ABIs for multiple addresses at once.
- * Auto-fetches from Sourcify and Etherscan/BSCScan if not already cached.
+ * POST /api/abi/batch  { addresses: string[] } → { abis: Record<address, Abi> }
+ * Looks up ABIs locally, then falls back to Sourcify / block explorers.
  */
 export async function POST(req: Request) {
-    try {
+    return handleRoute(async () => {
         const { addresses } = await req.json();
-        if (!Array.isArray(addresses)) {
-            return NextResponse.json({ error: "addresses must be an array" }, { status: 400 });
+        if (!Array.isArray(addresses)) throw new ValidationError("addresses must be an array");
+        if (addresses.length > MAX_ADDRESSES) {
+            throw new ValidationError(`at most ${MAX_ADDRESSES} addresses per request`);
         }
 
-        const state = getAnvilState();
-        const chainId = state.config?.chainId ?? 31337;
-
-        const abis = await batchFetchABIs(addresses, chainId);
-        return NextResponse.json({ abis });
-    } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : "Unknown error";
-        return NextResponse.json({ error: message }, { status: 500 });
-    }
+        const valid = addresses.filter((a): a is string => typeof a === "string" && /^0x[0-9a-fA-F]{40}$/.test(a));
+        const { chainId } = resolveFromRequest(req);
+        return { abis: await batchFetchABIs(valid, chainId) };
+    });
 }

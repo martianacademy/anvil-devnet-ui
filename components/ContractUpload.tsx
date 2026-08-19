@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/components/ui/toast";
+import { api } from "@/lib/apiClient";
 
 interface Props {
     onRegistered?: () => void;
@@ -18,26 +20,31 @@ export function ContractUpload({ onRegistered }: Props) {
     const [source, setSource] = useState("");
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
+    const { toast } = useToast();
 
     const submit = async () => {
-        if (!address || !name || !abi) return;
+        if (!address.trim() || !name.trim() || !abi.trim()) return;
         setLoading(true);
         try {
-            JSON.parse(abi); // validate JSON
-            const res = await fetch("/api/contracts", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ address, name, abi, source }),
+            JSON.parse(abi); // fail fast on malformed JSON before the round trip
+            await api.post("/api/contracts", {
+                address: address.trim(),
+                name: name.trim(),
+                abi,
+                source: source || undefined,
             });
-            if (res.ok) {
-                setStatus("success");
-                onRegistered?.();
-                setAddress(""); setName(""); setAbi(""); setSource("");
-            } else {
-                setStatus("error");
-            }
-        } catch {
+            setStatus("success");
+            toast(`Registered ${name.trim()}`, "success");
+            onRegistered?.();
+            setAddress(""); setName(""); setAbi(""); setSource("");
+        } catch (err) {
             setStatus("error");
+            toast(
+                err instanceof SyntaxError
+                    ? "The ABI is not valid JSON"
+                    : err instanceof Error ? err.message : "Could not register the contract",
+                "error"
+            );
         } finally {
             setLoading(false);
         }

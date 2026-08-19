@@ -2,7 +2,7 @@
 
 A self-hosted, full-stack local blockchain explorer and EVM debugger — like Tenderly or BuildBear, but for your local [Anvil](https://book.getfoundry.sh/anvil/) node.
 
-Built with **Next.js 16**, **viem**, **SQLite**, **shadcn/ui**, and **Zustand**. All state is local, all data is yours.
+Built with **Next.js 16**, **viem**, **SQLite** (via Node's built-in `node:sqlite` — no native modules to compile), **shadcn/ui**, and **Zustand**. All state is local, all data is yours.
 
 ---
 
@@ -23,14 +23,24 @@ Built with **Next.js 16**, **viem**, **SQLite**, **shadcn/ui**, and **Zustand**.
 | **Chain Profiles**          | Save and switch between fork configs (presets: Ethereum, BSC, opBNB, Local)            |
 | **Token Tracker**           | Watch ERC-20 balances across multiple addresses with 3 s auto-refresh                  |
 | **Call Simulator**          | Dry-run `eth_call` without touching chain state (snapshot/revert under the hood)       |
-| **EVM Snapshots**           | Take/revert named EVM snapshots from the dashboard                                     |
+| **EVM Snapshots**           | Take/revert named EVM snapshots from the EVM panel                                     |
+| **Projects**                | Run several isolated devnets side by side, each with its own port, chain and history   |
 
 ---
 
 ## Requirements
 
-- **Node.js** ≥ 20 or **Bun** ≥ 1.3
+- **Node.js ≥ 22.5** — persistence uses the built-in `node:sqlite` module, so there is no native
+  dependency to compile and nothing to rebuild when you upgrade Node
+- **Bun ≥ 1.3** (optional) — used for the scripts below; `npm`/`pnpm` work too
 - **Foundry** installed and `anvil` on your `$PATH` — [install guide](https://book.getfoundry.sh/getting-started/installation)
+
+### Optional environment variables
+
+| Variable            | Purpose                                                                     |
+| ------------------- | --------------------------------------------------------------------------- |
+| `ETHERSCAN_API_KEY` | Enables ABI auto-fetch from Etherscan V2 (multichain). Sourcify needs no key |
+| `DEVNET_DB_PATH`    | Move the SQLite file somewhere other than `./devnet.db`                      |
 
 ---
 
@@ -69,6 +79,8 @@ anvil-devnet-ui/
 │   ├── patches/page.tsx          # State patches + chain profiles
 │   ├── tokens/page.tsx           # ERC-20 token tracker
 │   ├── simulate/page.tsx         # Call simulator
+│   ├── projects/page.tsx         # Multi-devnet project manager
+│   ├── accounts/[address]/       # Address detail (balance, code, tx history)
 │   └── api/                      # All API routes
 │       ├── anvil/                # start / stop / status / snapshot …
 │       ├── explorer/             # BSCScan-compatible REST API
@@ -77,12 +89,14 @@ anvil-devnet-ui/
 │       ├── patches/              # fund / storage / profiles / scripts
 │       ├── tokens/               # ERC-20 watchlist
 │       ├── simulate/             # eth_call dry-run
+│       ├── projects/             # Multi-devnet CRUD + start/stop
 │       ├── stream/               # SSE live feed
 │       └── rpc/                  # Raw JSON-RPC proxy
 ├── components/                   # All UI components
 ├── lib/
-│   ├── db.ts                     # SQLite (WAL mode, 10 tables)
-│   ├── rpc.ts                    # viem publicClient + rpc() helper
+│   ├── db.ts                     # Schema + migrations (WAL mode, 11 tables)
+│   ├── sqlite.ts                 # Thin node:sqlite adapter (prepared-statement cache)
+│   ├── rpc.ts                    # viem publicClient + rpc()/rpcBatch() helpers
 │   ├── anvilProcess.ts           # Spawn / kill anvil process
 │   ├── txStore.ts                # Block / tx / trace persistence
 │   ├── abiRegistry.ts            # ABI storage, decode, Sourcify fetch
@@ -90,11 +104,21 @@ anvil-devnet-ui/
 │   ├── patcher.ts                # fundNative, fundERC20, writeStorage
 │   ├── tokenBalances.ts          # ERC-20 balance fetcher + slot detect
 │   ├── chainProfiles.ts          # Fork profile save/load
+│   ├── projectStore.ts           # Project CRUD + cascade delete
+│   ├── activeProject.ts          # Which node does this request target?
+│   ├── indexer.ts                # RPC block/tx → DB row mapping
+│   ├── validate.ts               # Input validators (400 instead of 500)
+│   ├── route.ts                  # Uniform route error handling
+│   ├── apiClient.ts              # Browser fetch wrapper (project-scoped)
+│   ├── format.ts                 # Shared display formatting
+│   ├── hooks.ts                  # useAsyncData / usePolling / useCopy
 │   └── decoder.ts                # Decode tx input via ABI
 ├── store/
-│   └── useDevnetStore.ts         # Zustand global state
+│   ├── useDevnetStore.ts         # Zustand global state
+│   └── useProjectStore.ts        # Projects + active project selection
+├── tests/                        # node --test unit tests
 └── scripts/
-    └── resetDb.ts                # Wipe SQLite database
+    └── resetDb.ts                # Wipe SQLite database (and, with --all, Anvil state)
 ```
 
 ---
@@ -102,11 +126,20 @@ anvil-devnet-ui/
 ## npm / bun Scripts
 
 ```bash
-bun dev          # Start dev server (http://localhost:3000)
-bun build        # Production build
-bun start        # Serve production build
-bun db:reset     # Delete devnet.db and WAL files
+bun dev                 # Start dev server (http://localhost:3000)
+bun run build           # Production build
+bun start               # Serve production build
+bun run typecheck       # tsc --noEmit
+bun run lint            # eslint
+bun run test            # node --test (unit tests in tests/)
+bun run check           # typecheck + lint + test
+bun run db:reset        # Delete devnet.db and its WAL sidecars
+bun run db:reset --all  # …and the persisted Anvil state dumps + logs
 ```
+
+Tests run on Node's built-in runner with native TypeScript support — no build step, no test framework
+dependency. They cover the pure layers: formatting, input validation, indexer mapping, Anvil argument
+construction, storage-slot derivation, the SQLite schema/migration, and project resolution.
 
 ---
 
@@ -142,13 +175,13 @@ curl -X POST http://localhost:3000/api/anvil/start \
 | Method | Route                    | Body                                           | Description             |
 | ------ | ------------------------ | ---------------------------------------------- | ----------------------- |
 | `POST` | `/api/anvil/mine`        | `{ blocks: 5 }`                                | Mine N blocks           |
-| `POST` | `/api/anvil/time`        | `{ action: "increaseTime", seconds: 86400 }`   | Jump forward in time    |
-| `POST` | `/api/anvil/time`        | `{ action: "setAutomine", enabled: false }`    | Toggle automining       |
-| `POST` | `/api/anvil/time`        | `{ action: "setIntervalMining", interval: 2 }` | Mine every N seconds    |
+| `POST` | `/api/anvil/time`        | `{ action: "increaseTime", value: 86400 }`     | Jump forward in time    |
+| `POST` | `/api/anvil/time`        | `{ action: "setAutomine", value: false }`      | Toggle automining       |
+| `POST` | `/api/anvil/time`        | `{ action: "setIntervalMining", value: 2 }`    | Mine every N seconds    |
 | `POST` | `/api/anvil/impersonate` | `{ action: "start", address: "0x…" }`          | Impersonate any address |
-| `GET`  | `/api/anvil/snapshot`    | —                                              | List all snapshots      |
+| `GET`  | `/api/anvil/snapshot`    | —                                              | List snapshots for the active project |
 | `POST` | `/api/anvil/snapshot`    | `{ label: "before-deploy" }`                   | Take a named snapshot   |
-| `POST` | `/api/anvil/revert`      | `{ snapshotId: "0x1" }`                        | Revert to snapshot      |
+| `POST` | `/api/anvil/revert`      | `{ id: "0x1" }`                                | Revert to snapshot (consumes it and any newer ones) |
 
 ```bash
 # Mine 10 blocks
@@ -159,7 +192,7 @@ curl -X POST http://localhost:3000/api/anvil/mine \
 # Jump forward 30 days
 curl -X POST http://localhost:3000/api/anvil/time \
   -H "Content-Type: application/json" \
-  -d '{ "action": "increaseTime", "seconds": 2592000 }'
+  -d '{ "action": "increaseTime", "value": 2592000 }'
 
 # Impersonate Binance hot wallet
 curl -X POST http://localhost:3000/api/anvil/impersonate \
@@ -175,8 +208,8 @@ curl -X POST http://localhost:3000/api/anvil/impersonate \
 | ------ | ---------------------- | ------------------------------------------- | ----------------------------------- |
 | `POST` | `/api/patches/fund`    | `{ type: "native", address, amount }`       | Set native ETH balance              |
 | `POST` | `/api/patches/fund`    | `{ type: "erc20", token, address, amount }` | Set ERC-20 balance via storage slot |
-| `GET`  | `/api/patches/storage` | `?address=0x…&slot=0x0`                     | Read a storage slot                 |
-| `POST` | `/api/patches/storage` | `{ address, slot, value }`                  | Write a storage slot                |
+| `GET`  | `/api/patches/storage` | `?contract=0x…&slot=0x0`                    | Read a storage slot                 |
+| `POST` | `/api/patches/storage` | `{ contract, slot, value }`                 | Write a storage slot                |
 
 ```bash
 # Give an address 1 000 ETH
@@ -192,7 +225,7 @@ curl -X POST http://localhost:3000/api/patches/fund \
 # Write a raw storage slot
 curl -X POST http://localhost:3000/api/patches/storage \
   -H "Content-Type: application/json" \
-  -d '{ "address": "0xContract", "slot": "0x0", "value": "0x0000000000000000000000000000000000000000000000000000000000000001" }'
+  -d '{ "contract": "0xContract", "slot": "0x0", "value": "0x0000000000000000000000000000000000000000000000000000000000000001" }'
 ```
 
 ---
@@ -214,16 +247,16 @@ Built-in presets: **Ethereum Mainnet**, **BSC Mainnet**, **opBNB Mainnet**, **Lo
 
 | Method   | Route                  | Body / Params                          | Description             |
 | -------- | ---------------------- | -------------------------------------- | ----------------------- |
-| `GET`    | `/api/tokens`          | —                                      | List watchlist          |
-| `POST`   | `/api/tokens`          | `{ token, address, symbol, decimals }` | Add to watchlist        |
-| `DELETE` | `/api/tokens`          | `{ id }`                               | Remove from watchlist   |
-| `GET`    | `/api/tokens/balances` | —                                      | Fetch all balances live |
+| `GET`    | `/api/tokens`          | —                                                  | List watchlist                    |
+| `POST`   | `/api/tokens`          | `{ token_address, wallet_address, token_type? }`   | Add to watchlist (metadata auto-read on-chain) |
+| `DELETE` | `/api/tokens`          | `{ id }`                                           | Remove from watchlist             |
+| `GET`    | `/api/tokens/balances` | —                                                  | Fetch all balances in one batched RPC call |
 
 ```bash
 # Watch WBNB balance of an address
 curl -X POST http://localhost:3000/api/tokens \
   -H "Content-Type: application/json" \
-  -d '{ "token": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", "address": "0xYourAddress", "symbol": "WBNB", "decimals": 18 }'
+  -d '{ "token_address": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", "wallet_address": "0xYourAddress" }'
 ```
 
 ---
@@ -242,7 +275,8 @@ curl -X POST http://localhost:3000/api/simulate \
   }'
 ```
 
-Response includes `result`, `storageDiff`, and `logs`.
+Response includes `success`, `error`, `gasEstimate`, `gasUsed`, `returnData`, `sstores`, and decoded
+`events`. The call runs inside an EVM snapshot that is always reverted, so chain state is untouched.
 
 ---
 
@@ -268,7 +302,41 @@ curl -X POST http://localhost:3000/api/contracts \
 
 Once registered, transaction inputs and events are automatically decoded in the debugger.
 
-Auto-fetch from **Sourcify** is supported — click "Fetch ABI" on any contract detail page.
+Auto-fetch from **Sourcify** is supported — click "Fetch ABI" on any contract detail page. Set
+`ETHERSCAN_API_KEY` to also fall back to the Etherscan V2 multichain API.
+
+---
+
+### Projects (multiple devnets at once)
+
+Each project is an isolated devnet: its own port, chain id, fork settings, Anvil process, persisted
+state file and indexed history. Create and control them from `/projects`.
+
+| Method   | Route                        | Body                                       | Description                          |
+| -------- | ---------------------------- | ------------------------------------------ | ------------------------------------ |
+| `GET`    | `/api/projects`              | —                                          | List projects (status reconciled with live processes) |
+| `POST`   | `/api/projects`              | `{ name, chainId, forkUrl?, port? }`       | Create a project (port auto-assigned) |
+| `GET`    | `/api/projects/[id]`         | —                                          | Read one project                     |
+| `PATCH`  | `/api/projects/[id]`         | `{ name?, chainId?, forkUrl?, port? }`     | Edit a stopped project               |
+| `DELETE` | `/api/projects/[id]`         | —                                          | Stop, then delete the project and all its data |
+| `POST`   | `/api/projects/[id]/start`   | —                                          | Spawn this project's Anvil instance  |
+| `POST`   | `/api/projects/[id]/stop`    | —                                          | Stop it and free the port            |
+
+Every other API route resolves its target node in this order: an explicit project → a live in-process
+instance → a project row marked running → the default `8545` node. To pin a request to one project,
+send `?projectId=…` or the `x-project-id` header — the web UI does this automatically for the
+project you select.
+
+```bash
+# Create and start a BSC fork on its own port
+ID=$(curl -s -X POST http://localhost:3000/api/projects \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "bsc-fork", "chainId": 56, "forkUrl": "https://bsc-dataseed.binance.org" }' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["project"]["id"])')
+
+curl -X POST "http://localhost:3000/api/projects/$ID/start"
+curl "http://localhost:3000/api/anvil/status?projectId=$ID"
+```
 
 ---
 
@@ -338,11 +406,15 @@ Connect to `/api/stream` to receive real-time block and transaction events:
 ```javascript
 const es = new EventSource("http://localhost:3000/api/stream");
 es.onmessage = (e) => {
-  const { type, data } = JSON.parse(e.data);
-  if (type === "block") console.log("New block:", data.number);
-  if (type === "tx") console.log("New tx:", data.hash);
+  const event = JSON.parse(e.data);
+  if (event.type === "block") console.log("New block:", event.number);
+  if (event.type === "tx") console.log("New tx:", event.hash);
+  if (event.type === "reset") console.log("Chain reset — clear your cache");
 };
 ```
+
+Event types: `status` (current chain/port/project), `block`, `tx`, and `reset` (emitted when the node
+restarts or the chain is reset, so clients can drop stale state).
 
 ---
 
@@ -391,10 +463,10 @@ Add ERC-20 contracts and wallet addresses to the **Token Tracker**. Balances ref
 | UI         | shadcn/ui + Tailwind CSS v4           |
 | State      | Zustand v5                            |
 | RPC Client | viem v2                               |
-| Database   | better-sqlite3 (WAL mode)             |
+| Database   | `node:sqlite` (WAL mode, no native build) |
 | Realtime   | Server-Sent Events (SSE)              |
 | Process    | Node.js `child_process.spawn`         |
-| Runtime    | Bun ≥ 1.3 (also works with Node ≥ 20) |
+| Runtime    | Node ≥ 22.5 (scripts via Bun ≥ 1.3)   |
 
 ---
 

@@ -1,4 +1,4 @@
-import { getDB } from "./db";
+import { getDB } from "./db.ts";
 import { decodeFunctionData, decodeEventLog, type Abi } from "viem";
 
 export interface ContractInfo {
@@ -23,25 +23,58 @@ export interface DecodedEvent {
     args: Record<string, unknown>;
 }
 
+const abiCache = new Map<string, ContractInfo>();
+/** Addresses we already tried (and failed) to resolve remotely, with an expiry. */
+const missCache = new Map<string, number>();
+const MISS_TTL_MS = 5 * 60 * 1000;
+
 export function saveContract(address: string, name: string, abi: Abi, source?: string) {
     const db = getDB();
+    const normalized = address.toLowerCase();
     db.prepare(`
     INSERT OR REPLACE INTO contracts (address, name, abi, source, verified_at)
     VALUES (?, ?, ?, ?, ?)
-  `).run(address.toLowerCase(), name, JSON.stringify(abi), source ?? null, Date.now());
+  `).run(normalized, name, JSON.stringify(abi), source ?? null, Date.now());
+    abiCache.set(normalized, { address: normalized, name, abi, source, verified_at: Date.now() });
+    missCache.delete(normalized);
+}
+
+/** Remove a contract from SQLite and both caches. */
+export function deleteContract(address: string): boolean {
+    const normalized = address.toLowerCase();
+    const res = getDB().prepare("DELETE FROM contracts WHERE lower(address) = ?").run(normalized);
+    abiCache.delete(normalized);
+    missCache.delete(normalized);
+    return res.changes > 0;
+}
+
+/** Drop every in-memory ABI cache entry (used after a chain switch). */
+export function clearAbiCache() {
+    abiCache.clear();
+    missCache.clear();
 }
 
 export function getContract(address: string): ContractInfo | null {
+    const normalized = address.toLowerCase();
+    if (abiCache.has(normalized)) {
+        return abiCache.get(normalized) ?? null;
+    }
     const db = getDB();
-    const row = db.prepare("SELECT * FROM contracts WHERE lower(address) = ?").get(address.toLowerCase()) as { address: string; name: string; abi: string; source?: string; verified_at: number } | undefined;
+    const row = db.prepare("SELECT * FROM contracts WHERE lower(address) = ?").get(normalized) as { address: string; name: string; abi: string; source?: string; verified_at: number } | undefined;
     if (!row) return null;
-    return { ...row, abi: JSON.parse(row.abi) };
+    const contract: ContractInfo = { ...row, abi: JSON.parse(row.abi) };
+    abiCache.set(normalized, contract);
+    return contract;
 }
 
 export function getAllContracts(): ContractInfo[] {
     const db = getDB();
     const rows = db.prepare("SELECT * FROM contracts ORDER BY verified_at DESC").all() as { address: string; name: string; abi: string; source?: string; verified_at: number }[];
-    return rows.map((r) => ({ ...r, abi: JSON.parse(r.abi) }));
+    return rows.map((r) => {
+        const contract: ContractInfo = { ...r, abi: JSON.parse(r.abi) };
+        abiCache.set(r.address, contract);
+        return contract;
+    });
 }
 
 export function getABI(address: string): Abi | null {
@@ -89,85 +122,98 @@ export function decodeEvent(address: string, log: {
     }
 }
 
+/**
+ * Resolve an ABI: local SQLite → Sourcify → block explorer.
+ * Failures are negatively cached for a few minutes so a page full of unknown
+ * addresses doesn't re-hit the network on every render.
+ */
 export async function autoFetchABI(address: string, chainId: number): Promise<Abi | null> {
-    // 1. Check local SQLite first
-    const local = getABI(address);
+    const normalized = address.toLowerCase();
+
+    const local = getABI(normalized);
     if (local) return local;
 
-    // 2. Try Sourcify
-    try {
-        const res = await fetch(
-            `https://repo.sourcify.dev/contracts/full_match/${chainId}/${address}/metadata.json`
-        );
-        if (res.ok) {
+    const missedAt = missCache.get(normalized);
+    if (missedAt && Date.now() - missedAt < MISS_TTL_MS) return null;
+
+    const abi = (await fetchFromSourcify(normalized, chainId)) ?? (await fetchFromExplorer(normalized, chainId));
+    if (!abi) missCache.set(normalized, Date.now());
+    return abi;
+}
+
+/** Sourcify hosts verified metadata for most public chains — no API key needed. */
+async function fetchFromSourcify(address: string, chainId: number): Promise<Abi | null> {
+    for (const match of ["full_match", "partial_match"]) {
+        try {
+            const res = await fetch(
+                `https://repo.sourcify.dev/contracts/${match}/${chainId}/${address}/metadata.json`,
+                { signal: AbortSignal.timeout(6000) }
+            );
+            if (!res.ok) continue;
             const meta = await res.json();
-            if (meta?.output?.abi) {
-                const name = Object.keys(meta.settings?.compilationTarget ?? {})[0] ?? address;
-                saveContract(address, name, meta.output.abi);
-                return meta.output.abi;
-            }
-        }
-    } catch { /* ignore */ }
-
-    // 3. Try block explorer (Etherscan / BSCScan etc.)
-    try {
-        const abi = await fetchFromExplorer(address, chainId);
-        if (abi) return abi;
-    } catch { /* ignore */ }
-
+            if (!meta?.output?.abi) continue;
+            const name = Object.keys(meta.settings?.compilationTarget ?? {})
+                .map((k) => meta.settings.compilationTarget[k])
+                .find(Boolean) ?? shortAddress(address);
+            saveContract(address, String(name), meta.output.abi);
+            return meta.output.abi as Abi;
+        } catch { /* try the next match type */ }
+    }
     return null;
 }
 
-/** Explorer API base URLs by chain ID */
-const EXPLORER_APIS: Record<number, string> = {
-    1: "https://api.etherscan.io/api",
-    56: "https://api.bscscan.com/api",
-    137: "https://api.polygonscan.com/api",
-    42161: "https://api.arbiscan.io/api",
-    10: "https://api-optimistic.etherscan.io/api",
-    8453: "https://api.basescan.org/api",
-    43114: "https://api.snowtrace.io/api",
-    250: "https://api.ftmscan.com/api",
-};
+function shortAddress(address: string): string {
+    return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+/**
+ * Etherscan V2 is one multichain endpoint keyed by `chainid`, and it requires an
+ * API key. Set ETHERSCAN_API_KEY to enable this fallback; without it we stop at Sourcify.
+ */
+const ETHERSCAN_V2 = "https://api.etherscan.io/v2/api";
 
 async function fetchFromExplorer(address: string, chainId: number): Promise<Abi | null> {
-    const baseUrl = EXPLORER_APIS[chainId];
-    if (!baseUrl) return null;
-
-    const url = `${baseUrl}?module=contract&action=getabi&address=${address}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-    if (!res.ok) return null;
-
-    const data = await res.json();
-    if (data.status !== "1" || !data.result) return null;
+    const apiKey = process.env.ETHERSCAN_API_KEY;
+    if (!apiKey) return null;
 
     try {
-        const abi = JSON.parse(data.result) as Abi;
-        // Extract contract name from ABI (first function or event name)
-        const firstName = (abi as unknown as Array<{ name?: string }>).find((x) => x.name)?.name ?? "Unknown";
-        saveContract(address, firstName, abi);
+        const url = `${ETHERSCAN_V2}?chainid=${chainId}&module=contract&action=getsourcecode&address=${address}&apikey=${apiKey}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) return null;
+
+        const data = await res.json();
+        if (data.status !== "1" || !Array.isArray(data.result) || data.result.length === 0) return null;
+
+        const entry = data.result[0] as { ABI?: string; ContractName?: string; SourceCode?: string };
+        if (!entry.ABI || entry.ABI.startsWith("Contract source code not verified")) return null;
+
+        const abi = JSON.parse(entry.ABI) as Abi;
+        saveContract(address, entry.ContractName || shortAddress(address), abi, entry.SourceCode || undefined);
         return abi;
     } catch {
         return null;
     }
 }
 
-/** Batch-fetch ABIs for multiple addresses, returns a map of address → ABI */
+/** Batch-fetch ABIs for multiple addresses with concurrency limit, returns a map of address → ABI */
 export async function batchFetchABIs(
     addresses: string[],
-    chainId: number
+    chainId: number,
+    concurrency = 5
 ): Promise<Record<string, Abi>> {
     const unique = [...new Set(addresses.map((a) => a.toLowerCase()))];
     const result: Record<string, Abi> = {};
 
-    await Promise.all(
-        unique.map(async (addr) => {
-            try {
-                const abi = await autoFetchABI(addr, chainId);
-                if (abi) result[addr] = abi;
-            } catch { /* skip */ }
-        })
-    );
+    async function worker(addr: string) {
+        try {
+            const abi = await autoFetchABI(addr, chainId);
+            if (abi) result[addr] = abi;
+        } catch { /* skip */ }
+    }
+
+    for (let i = 0; i < unique.length; i += concurrency) {
+        await Promise.all(unique.slice(i, i + concurrency).map(worker));
+    }
 
     return result;
 }

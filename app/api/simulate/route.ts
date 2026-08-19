@@ -1,74 +1,105 @@
-import { NextResponse } from "next/server";
-import { getAnvilState } from "@/lib/anvilProcess";
+import { resolveFromRequest } from "@/lib/activeProject";
+import { rpc } from "@/lib/rpc";
+import { decodeEvent, getName } from "@/lib/abiRegistry";
+import { assertAddress, assertHex } from "@/lib/validate";
+import { handleRoute } from "@/lib/route";
+
+export const dynamic = "force-dynamic";
 
 interface StructStep { op: string; stack?: string[] }
+interface RpcLog { address: string; topics: `0x${string}`[]; data: `0x${string}` }
 
+/**
+ * Dry-run a call: `eth_call` for the return value, then a real send inside an
+ * EVM snapshot so we can collect gas, SSTOREs and logs, and revert afterwards.
+ */
 export async function POST(req: Request) {
-    try {
-        const { to, from, data, value = "0x0" } = await req.json();
-        const port = getAnvilState().config?.port ?? 8545;
-        const baseUrl = `http://127.0.0.1:${port}`;
+    return handleRoute(async () => {
+        const body = await req.json();
+        const to = assertAddress(body.to, "to");
+        const from = body.from ? assertAddress(body.from, "from") : undefined;
+        const data = body.data ? assertHex(body.data, "data") : "0x";
+        const value = body.value ? assertHex(body.value, "value") : "0x0";
+        const { port } = resolveFromRequest(req);
 
-        const jsonRpc = (method: string, params: unknown[]) =>
-            fetch(baseUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ jsonrpc: "2.0", method, params, id: Date.now() }),
-            }).then((r) => r.json());
+        const tx = { to, from, data, value };
 
-        // Step 1: eth_call for result
-        const callResult = await jsonRpc("eth_call", [{ to, from, data, value }, "latest"]);
-
-        // Step 2: estimate gas
-        let gasEst = "0";
+        let returnData: string | null = null;
+        let callError: string | null = null;
         try {
-            const gasResult = await jsonRpc("eth_estimateGas", [{ to, from, data, value }]);
-            gasEst = BigInt(gasResult.result ?? "0x0").toString();
-        } catch { /* ignore */ }
+            returnData = await rpc<string>("eth_call", [tx, "latest"], port);
+        } catch (err) {
+            callError = err instanceof Error ? err.message : "eth_call reverted";
+        }
 
-        // Step 3: snapshot → send tx → trace → revert
-        const snapResult = await jsonRpc("evm_snapshot", []);
-        const snapId = snapResult.result;
+        let gasEstimate: string | null = null;
+        try {
+            gasEstimate = BigInt(await rpc<string>("eth_estimateGas", [tx], port)).toString();
+        } catch {
+            /* estimation fails for reverting calls — leave null */
+        }
 
-        let sstores: Array<{ slot: string; value: string }> = [];
+        // Cap the send at the block gas limit — a hard-coded 100M is rejected outright.
+        const blockGasLimit = await rpc<{ gasLimit?: string }>("eth_getBlockByNumber", ["latest", false], port)
+            .then((b) => (b?.gasLimit ? BigInt(b.gasLimit) : null))
+            .catch(() => null);
+        const requestedGas = gasEstimate
+            ? BigInt(gasEstimate) * 2n
+            : blockGasLimit ?? 30_000_000n;
+        const gas = `0x${(blockGasLimit && requestedGas > blockGasLimit ? blockGasLimit : requestedGas).toString(16)}`;
+
+        const snapshotId = await rpc<string>("evm_snapshot", [], port);
+        let sstores: { slot: string; value: string }[] = [];
         let events: unknown[] = [];
+        let gasUsed: string | null = null;
+        let executionError: string | null = null;
 
         try {
-            const sendResult = await jsonRpc("eth_sendTransaction", [{
-                to, from, data, value,
-                gas: "0x5F5E100",
-            }]);
-            const txHash = sendResult.result;
-
+            const txHash = await rpc<string>("eth_sendTransaction", [{ ...tx, gas }], port);
             if (txHash) {
-                await jsonRpc("evm_mine", [{}]);
-                const traceResult = await jsonRpc("debug_traceTransaction", [txHash, { disableStorage: false }]);
-                const steps = traceResult.result?.structLogs ?? [];
-                sstores = steps
-                    .filter((s: StructStep) => s.op === "SSTORE")
-                    .map((s: StructStep) => ({
+                await rpc("evm_mine", [], port).catch(() => { });
+
+                const trace = await rpc<{ structLogs?: StructStep[] }>(
+                    "debug_traceTransaction", [txHash, { disableStorage: false, disableMemory: true }], port
+                ).catch(() => null);
+
+                sstores = (trace?.structLogs ?? [])
+                    .filter((s) => s.op === "SSTORE")
+                    .map((s) => ({
                         slot: s.stack?.[s.stack.length - 1] ?? "?",
                         value: s.stack?.[s.stack.length - 2] ?? "?",
                     }));
 
-                // Get receipt for events
-                const rcpt = await jsonRpc("eth_getTransactionReceipt", [txHash]);
-                events = rcpt.result?.logs ?? [];
+                const receipt = await rpc<{ logs?: RpcLog[]; gasUsed?: string } | null>(
+                    "eth_getTransactionReceipt", [txHash], port
+                );
+                gasUsed = receipt?.gasUsed ?? null;
+                events = (receipt?.logs ?? []).map((log) => {
+                    const decoded = decodeEvent(log.address, log);
+                    return {
+                        ...log,
+                        contractName: getName(log.address),
+                        eventName: decoded?.eventName ?? null,
+                        args: decoded?.args ? JSON.parse(JSON.stringify(decoded.args, (_k, v) => (typeof v === "bigint" ? v.toString() : v))) : null,
+                    };
+                });
             }
+        } catch (err) {
+            executionError = err instanceof Error ? err.message : "Execution failed";
         } finally {
-            await jsonRpc("evm_revert", [snapId]);
+            // Always roll the chain back — a simulation must not leave state behind.
+            await rpc("evm_revert", [snapshotId], port).catch(() => { });
         }
 
-        const success = !callResult.error;
-        return NextResponse.json({
-            success,
-            error: callResult.error?.message ?? null,
-            gasEstimate: gasEst,
-            returnData: callResult.result ?? null,
+        return {
+            success: callError === null && executionError === null,
+            error: callError ?? executionError,
+            reverted: callError !== null,
+            gasEstimate,
+            gasUsed,
+            returnData,
             sstores,
             events,
-        });
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+        };
+    });
 }

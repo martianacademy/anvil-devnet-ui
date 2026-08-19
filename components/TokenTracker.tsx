@@ -1,11 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/components/ui/toast";
+import { api } from "@/lib/apiClient";
+import { usePolling } from "@/lib/hooks";
+import { formatTokenAmount, truncateHex } from "@/lib/format";
 
 interface WatchEntry {
     id: number;
@@ -18,60 +22,54 @@ interface WatchEntry {
     balance?: string;
 }
 
+const REFRESH_MS = 3000;
+
 export function TokenTracker() {
+    const { toast } = useToast();
     const [watchlist, setWatchlist] = useState<WatchEntry[]>([]);
     const [tokenAddr, setTokenAddr] = useState("");
     const [walletAddr, setWalletAddr] = useState("");
     const [tokenType, setTokenType] = useState<"ERC20" | "ERC721">("ERC20");
-    const [status, setStatus] = useState("");
+    const [busy, setBusy] = useState(false);
 
     const loadBalances = async () => {
-        const data = await fetch("/api/tokens/balances").then((r) => r.json());
+        const data = await api.get<WatchEntry[]>("/api/tokens/balances").catch(() => []);
         setWatchlist(Array.isArray(data) ? data : []);
     };
 
-    useEffect(() => {
-        loadBalances();
-        const interval = setInterval(loadBalances, 3000);
-        return () => clearInterval(interval);
-    }, []);
+    // The API client scopes each request to the active project automatically.
+    usePolling(loadBalances, REFRESH_MS);
 
     const add = async () => {
+        setBusy(true);
         try {
-            await fetch("/api/tokens", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    token_address: tokenAddr,
-                    wallet_address: walletAddr,
-                    token_type: tokenType,
-                }),
+            const res = await api.post<{ metadata?: { symbol: string | null } }>("/api/tokens", {
+                token_address: tokenAddr.trim(),
+                wallet_address: walletAddr.trim(),
+                token_type: tokenType,
             });
-            setStatus("✓ Added to watchlist");
-            setTokenAddr(""); setWalletAddr("");
-            loadBalances();
-        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
+            toast(`Watching ${res.metadata?.symbol ?? truncateHex(tokenAddr)}`, "success");
+            setTokenAddr("");
+            setWalletAddr("");
+            await loadBalances();
+        } catch (err) {
+            toast(err instanceof Error ? err.message : "Could not add token", "error");
+        } finally {
+            setBusy(false);
+        }
     };
 
     const remove = async (id: number) => {
-        await fetch("/api/tokens", {
-            method: "DELETE",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id }),
-        });
-        loadBalances();
+        try {
+            await api.del("/api/tokens", { id });
+            await loadBalances();
+        } catch (err) {
+            toast(err instanceof Error ? err.message : "Could not remove token", "error");
+        }
     };
 
-    const formatBalance = (entry: WatchEntry) => {
-        if (!entry.balance) return "—";
-        try {
-            const raw = BigInt(entry.balance);
-            const decimals = entry.token_decimals ?? 18;
-            const divisor = BigInt(10 ** Math.min(decimals, 18));
-            const whole = raw / divisor;
-            return whole.toLocaleString();
-        } catch { return entry.balance; }
-    };
+    const formatBalance = (entry: WatchEntry) =>
+        entry.balance ? formatTokenAmount(entry.balance, entry.token_decimals ?? 18) : "—";
 
     return (
         <div className="space-y-4">
@@ -104,14 +102,10 @@ export function TokenTracker() {
                                 </SelectContent>
                             </Select>
                         </div>
-                        <Button size="sm" onClick={add}>Add</Button>
+                        <Button size="sm" onClick={add} disabled={busy || !tokenAddr.trim() || !walletAddr.trim()}>
+                            {busy ? "Adding…" : "Add"}
+                        </Button>
                     </div>
-                    {status && (
-                        <div className={`rounded-lg px-3 py-2 text-xs font-mono border ${status.startsWith("Error")
-                                ? "bg-red-500/10 border-red-500/30 text-red-400"
-                                : "bg-green-500/10 border-green-500/30 text-green-400"
-                            }`}>{status}</div>
-                    )}
                 </div>
             </div>
 
@@ -141,17 +135,21 @@ export function TokenTracker() {
                                 watchlist.map((w) => (
                                     <tr key={w.id} className="border-b border-border/30 last:border-0 hover:bg-muted/30 transition-colors">
                                         <td className="px-5 py-2.5 text-primary">
-                                            {w.token_symbol ?? `${w.token_address.slice(0, 6)}…`}
+                                            {w.token_symbol ?? truncateHex(w.token_address)}
                                         </td>
                                         <td className="px-4 py-2.5 text-muted-foreground">
-                                            {w.wallet_address.slice(0, 6)}…{w.wallet_address.slice(-4)}
+                                            {truncateHex(w.wallet_address)}
                                         </td>
                                         <td className="px-4 py-2.5 text-foreground font-semibold">{formatBalance(w)}</td>
                                         <td className="px-4 py-2.5">
                                             <Badge variant="outline" className="text-xs">{w.token_type}</Badge>
                                         </td>
                                         <td className="px-4 py-2.5">
-                                            <button className="text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded px-1.5 py-0.5 transition-colors text-xs" onClick={() => remove(w.id)}>✕</button>
+                                            <button
+                                                aria-label="Remove from watchlist"
+                                                className="text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded px-1.5 py-0.5 transition-colors text-xs"
+                                                onClick={() => remove(w.id)}
+                                            >✕</button>
                                         </td>
                                     </tr>
                                 ))

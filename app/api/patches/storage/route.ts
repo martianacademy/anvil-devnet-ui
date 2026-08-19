@@ -1,35 +1,36 @@
-import { NextResponse } from "next/server";
-import { writeStorageSlot, readStorageSlot } from "@/lib/patcher";
-import { getDB } from "@/lib/db";
-import { getAnvilState } from "@/lib/anvilProcess";
+import { getDB, scopeId } from "@/lib/db";
+import { readStorageSlot, writeStorageSlot } from "@/lib/patcher";
+import { resolveFromRequest } from "@/lib/activeProject";
+import { assertAddress, assertHex, assertSlot } from "@/lib/validate";
+import { handleRoute } from "@/lib/route";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
-    try {
+    return handleRoute(async () => {
         const { contract, slot, value } = await req.json();
-        const port = getAnvilState().config?.port ?? 8545;
-        await writeStorageSlot(contract, slot, value, port);
+        const address = assertAddress(contract, "contract");
+        const slotHex = assertSlot(slot);
+        const valueHex = assertHex(value, "value");
+        const active = resolveFromRequest(req);
 
-        const db = getDB();
-        db.prepare(`
-      INSERT INTO patch_history (type, target_address, payload, applied_at)
-      VALUES (?, ?, ?, ?)
-    `).run("storage_write", contract, JSON.stringify({ slot, value }), Date.now());
+        await writeStorageSlot(address, slotHex, valueHex, active.port);
 
-        return NextResponse.json({ success: true });
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+        getDB().prepare(`
+      INSERT INTO patch_history (type, target_address, payload, applied_at, project_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run("storage_write", address, JSON.stringify({ slot: slotHex, value: valueHex }), Date.now(), scopeId(active.projectId));
+
+        return { success: true, slot: slotHex, value: valueHex };
+    });
 }
 
 export async function GET(req: Request) {
-    try {
-        const { searchParams } = new URL(req.url);
-        const contract = searchParams.get("contract") ?? "";
-        const slot = searchParams.get("slot") ?? "0x0";
-        const port = getAnvilState().config?.port ?? 8545;
-        const value = await readStorageSlot(contract, slot, port);
-        return NextResponse.json({ value });
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+    return handleRoute(async () => {
+        const params = new URL(req.url).searchParams;
+        const address = assertAddress(params.get("contract"), "contract");
+        const slot = assertSlot(params.get("slot") ?? "0x0");
+        const active = resolveFromRequest(req);
+        return { slot, value: await readStorageSlot(address, slot, active.port) };
+    });
 }

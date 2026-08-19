@@ -67,12 +67,25 @@ export function formatMemory(memory: string[]): string {
     return memory.join("");
 }
 
+const OPCODE_COLOR_MAP = new Map<string, string>([
+    ["SSTORE", "text-orange-400"],
+    ["SLOAD", "text-orange-400"],
+    ["CALL", "text-blue-400"],
+    ["DELEGATECALL", "text-blue-400"],
+    ["STATICCALL", "text-blue-400"],
+    ["CALLCODE", "text-blue-400"],
+    ["REVERT", "text-red-400"],
+    ["INVALID", "text-red-400"],
+    ["RETURN", "text-green-400"],
+    ["STOP", "text-green-400"],
+    ["MSTORE", "text-purple-400"],
+    ["MLOAD", "text-purple-400"],
+    ["MSTORE8", "text-purple-400"],
+    ["JUMP", "text-yellow-400"],
+    ["JUMPI", "text-yellow-400"],
+    ["JUMPDEST", "text-yellow-400"],
+]);
+
 export function getOpcodeColor(op: string): string {
-    if (["SSTORE", "SLOAD"].includes(op)) return "text-orange-400";
-    if (["CALL", "DELEGATECALL", "STATICCALL", "CALLCODE"].includes(op)) return "text-blue-400";
-    if (["REVERT", "INVALID"].includes(op)) return "text-red-400";
-    if (["RETURN", "STOP"].includes(op)) return "text-green-400";
-    if (["MSTORE", "MLOAD", "MSTORE8"].includes(op)) return "text-purple-400";
-    if (["JUMP", "JUMPI", "JUMPDEST"].includes(op)) return "text-yellow-400";
-    return "text-gray-300";
+    return OPCODE_COLOR_MAP.get(op) ?? "text-gray-300";
 }

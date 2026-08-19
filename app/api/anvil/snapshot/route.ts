@@ -1,35 +1,35 @@
-import { NextResponse } from "next/server";
-import { getAnvilState } from "@/lib/anvilProcess";
-import { getDB } from "@/lib/db";
+import { getDB, scopeId } from "@/lib/db";
 import { rpc } from "@/lib/rpc";
+import { resolveFromRequest } from "@/lib/activeProject";
+import { assertNonEmptyString } from "@/lib/validate";
+import { handleRoute } from "@/lib/route";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
-    try {
-        const { label } = await req.json();
-        const id = await rpc("evm_snapshot", []) as string;
+    return handleRoute(async () => {
+        const body = await req.json().catch(() => ({}));
+        const active = resolveFromRequest(req);
 
-        // Get current block number
-        const blockHex = await rpc("eth_blockNumber", []) as string;
-        const blockNumber = parseInt(blockHex, 16);
+        const id = await rpc<string>("evm_snapshot", [], active.port);
+        const blockNumber = parseInt(await rpc<string>("eth_blockNumber", [], active.port), 16);
+        const label = body.label ? assertNonEmptyString(body.label, "label", 80) : `Snapshot ${id}`;
 
-        const db = getDB();
-        db.prepare(`
-      INSERT OR REPLACE INTO snapshots (id, label, block_number, created_at)
-      VALUES (?, ?, ?, ?)
-    `).run(id, label ?? `Snapshot ${id}`, blockNumber, Date.now());
+        getDB().prepare(`
+      INSERT OR REPLACE INTO snapshots (id, label, block_number, created_at, project_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, label, blockNumber, Date.now(), scopeId(active.projectId));
 
-        return NextResponse.json({ id, label, blockNumber });
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+        return { id, label, blockNumber, projectId: active.projectId };
+    });
 }
 
-export async function GET() {
-    try {
-        const db = getDB();
-        const snapshots = db.prepare("SELECT * FROM snapshots ORDER BY created_at DESC").all();
-        return NextResponse.json(snapshots);
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+export async function GET(req: Request) {
+    return handleRoute(async () => {
+        const active = resolveFromRequest(req);
+        const rows = getDB()
+            .prepare("SELECT * FROM snapshots WHERE project_id = ? ORDER BY created_at DESC")
+            .all(scopeId(active.projectId));
+        return rows;
+    });
 }

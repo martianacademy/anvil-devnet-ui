@@ -1,10 +1,8 @@
 "use client";
 
-import { useState } from "react";
 import { useDevnetStore } from "@/store/useDevnetStore";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { getOpcodeColor } from "@/lib/traceParser";

@@ -1,66 +1,66 @@
-import { NextResponse } from "next/server";
 import { getTxByHash } from "@/lib/txStore";
-import { getAnvilState } from "@/lib/anvilProcess";
+import { resolveFromRequest } from "@/lib/activeProject";
+import { rpc } from "@/lib/rpc";
+import { getName } from "@/lib/abiRegistry";
+import { hexToNumber, type RpcReceipt, type RpcTx } from "@/lib/indexer";
+import { HttpError, assertTxHash } from "@/lib/validate";
+import { handleRoute } from "@/lib/route";
 
-export async function GET(
-    req: Request,
-    { params }: { params: Promise<{ hash: string }> }
-) {
-    try {
-        const { hash } = await params;
+export const dynamic = "force-dynamic";
 
-        // Check SQLite first — normalize to flat camelCase shape
+export async function GET(req: Request, { params }: { params: Promise<{ hash: string }> }) {
+    return handleRoute(async () => {
+        const hash = assertTxHash((await params).hash);
+        const { port } = resolveFromRequest(req);
+
+        // Indexed copy first; fall back to the live node for anything not yet streamed.
         const cached = getTxByHash(hash);
         if (cached) {
-            return NextResponse.json({
+            return {
                 hash: cached.hash,
                 from: cached.from_address,
-                to: cached.to_address ?? null,
+                to: cached.to_address,
                 blockNumber: cached.block_number,
+                blockTimestamp: cached.block_timestamp,
                 gas: cached.gas,
                 gasUsed: cached.gas_used,
+                gasPrice: cached.gas_price,
                 value: cached.value,
                 input: cached.input,
                 nonce: cached.nonce,
                 status: cached.status === 1 ? "success" : "failed",
                 decoded_function: cached.decoded_function,
+                decoded_params: cached.decoded_params ? JSON.parse(cached.decoded_params) : null,
+                contractName: cached.to_address ? getName(cached.to_address) : null,
+                source: "index" as const,
                 receipt: null,
-            });
+            };
         }
 
-        // Fetch live from anvil
-        const port = getAnvilState().config?.port ?? 8545;
-        const jsonRpc = (method: string, p: unknown[]) =>
-            fetch(`http://127.0.0.1:${port}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ jsonrpc: "2.0", method, params: p, id: Date.now() }),
-            }).then((r) => r.json());
-
-        const [txRes, rcptRes] = await Promise.all([
-            jsonRpc("eth_getTransactionByHash", [hash]),
-            jsonRpc("eth_getTransactionReceipt", [hash]),
+        const [tx, receipt] = await Promise.all([
+            rpc<RpcTx & { blockNumber?: string } | null>("eth_getTransactionByHash", [hash], port),
+            rpc<RpcReceipt | null>("eth_getTransactionReceipt", [hash], port),
         ]);
+        if (!tx) throw new HttpError(404, "Transaction not found");
 
-        const t = txRes.result;
-        const r = rcptRes.result;
-        if (!t) return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
-
-        return NextResponse.json({
-            hash: t.hash,
-            from: t.from,
-            to: t.to ?? null,
-            blockNumber: t.blockNumber ? parseInt(t.blockNumber, 16) : null,
-            gas: t.gas,
-            gasUsed: r?.gasUsed ?? null,
-            value: t.value,
-            input: t.input,
-            nonce: t.nonce ? parseInt(t.nonce, 16) : null,
-            status: r ? (parseInt(r.status, 16) === 1 ? "success" : "failed") : "unknown",
+        return {
+            hash: tx.hash,
+            from: tx.from,
+            to: tx.to ?? null,
+            blockNumber: tx.blockNumber ? hexToNumber(tx.blockNumber) : null,
+            blockTimestamp: null,
+            gas: tx.gas ?? null,
+            gasUsed: receipt?.gasUsed ?? null,
+            gasPrice: tx.gasPrice ?? null,
+            value: tx.value ?? "0x0",
+            input: tx.input ?? null,
+            nonce: tx.nonce ? hexToNumber(tx.nonce) : null,
+            status: receipt ? (hexToNumber(receipt.status, 1) === 1 ? "success" : "failed") : "pending",
             decoded_function: null,
-            receipt: r ?? null,
-        });
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+            decoded_params: null,
+            contractName: tx.to ? getName(tx.to) : null,
+            source: "node" as const,
+            receipt: receipt ?? null,
+        };
+    });
 }

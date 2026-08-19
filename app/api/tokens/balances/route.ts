@@ -1,27 +1,19 @@
-import { NextResponse } from "next/server";
-import { getDB } from "@/lib/db";
-import { fetchTokenBalance } from "@/lib/tokenBalances";
-import { getAnvilState } from "@/lib/anvilProcess";
-
-interface WatchlistRow { id: number; token_address: string; wallet_address: string; token_name?: string; token_symbol?: string; token_decimals: number; token_type: string }
+import { getDB, scopeId } from "@/lib/db";
+import { fetchTokenBalances, type TokenWatch } from "@/lib/tokenBalances";
+import { resolveFromRequest } from "@/lib/activeProject";
+import { handleRoute } from "@/lib/route";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-    try {
-        const db = getDB();
-        const watchlist = db.prepare("SELECT * FROM token_watchlist ORDER BY added_at DESC").all() as WatchlistRow[];
-        const port = getAnvilState().config?.port ?? 8545;
+export async function GET(req: Request) {
+    return handleRoute(async () => {
+        const active = resolveFromRequest(req);
+        const watchlist = getDB()
+            .prepare("SELECT * FROM token_watchlist WHERE project_id = ? ORDER BY added_at DESC")
+            .all(scopeId(active.projectId)) as TokenWatch[];
 
-        const balances = await Promise.all(
-            watchlist.map(async (w) => ({
-                ...w,
-                balance: await fetchTokenBalance(w.token_address, w.wallet_address, port),
-            }))
-        );
-
-        return NextResponse.json(balances);
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+        // One batched RPC round trip for the whole watchlist instead of N calls.
+        const balances = await fetchTokenBalances(watchlist, active.port);
+        return watchlist.map((w, i) => ({ ...w, balance: balances[i] }));
+    });
 }

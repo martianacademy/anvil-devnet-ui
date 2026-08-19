@@ -16,9 +16,11 @@ import {
     CommandSeparator,
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Check, ChevronsUpDown, Loader2, RotateCcw } from "lucide-react";
 import { useDevnetStore } from "@/store/useDevnetStore";
 import { useToast } from "@/components/ui/toast";
+import { api } from "@/lib/apiClient";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 
 // ── well-known chains pinned at top ──────────────────────────────────────────
@@ -39,20 +41,8 @@ interface ChainEntry { chainId: number; name: string }
 
 const DEFAULT_CHAIN_ID = 31337;
 
-const DEFAULT_CONFIG = {
-    chainId: DEFAULT_CHAIN_ID,
-    port: 8545,
-    blockTime: 2,
-    accounts: 10,
-    balance: 10000,
-    baseFee: 0,
-    stepsTracing: true,
-    persistState: true,
-    stateFile: `/tmp/anvil-state-${DEFAULT_CHAIN_ID}.json`,
-};
-
 export function AnvilControls() {
-    const { nodeStatus, nodeConfig, setNodeStatus, setNodeConfig, setPort, setChainId, saveChainSnapshot, resetChainData } =
+    const { nodeStatus, setNodeStatus, setNodeConfig, setPort, setChainId, saveChainSnapshot, resetChainData } =
         useDevnetStore();
     const { toast } = useToast();
     const { confirm } = useConfirm();
@@ -70,7 +60,6 @@ export function AnvilControls() {
             baseFee: nc.baseFee ?? 0,
             stepsTracing: nc.stepsTracing ?? true,
             persistState: nc.persistState ?? true,
-            stateFile: nc.stateFile ?? `/tmp/anvil-state-${cid}.json`,
         };
     });
     const [showConfig, setShowConfig] = useState(false);
@@ -85,31 +74,60 @@ export function AnvilControls() {
     const [isCustom, setIsCustom] = useState(false);
     const [customInput, setCustomInput] = useState("");
 
-    // Fetch chainlist on first open
+    // Pull the public chain list the first time the selector opens.
     useEffect(() => {
         if (!chainOpen || chainsFetched) return;
-        setChainsLoading(true);
-        fetch("https://chainid.network/chains.json")
-            .then((r) => r.json())
-            .then((data: { chainId: number; name: string }[]) => {
-                setAllChains(data.map((c) => ({ chainId: c.chainId, name: c.name })).sort((a, b) => a.chainId - b.chainId));
-                setChainsFetched(true);
-            })
-            .catch(() => setChainsFetched(true))
-            .finally(() => setChainsLoading(false));
+        let cancelled = false;
+        void (async () => {
+            setChainsLoading(true);
+            try {
+                const res = await fetch("https://chainid.network/chains.json", { signal: AbortSignal.timeout(8000) });
+                const data = (await res.json()) as { chainId: number; name: string }[];
+                if (!cancelled) {
+                    setAllChains(
+                        data.map((c) => ({ chainId: c.chainId, name: c.name })).sort((a, b) => a.chainId - b.chainId)
+                    );
+                }
+            } catch {
+                /* offline — the pinned list still works */
+            } finally {
+                if (!cancelled) {
+                    setChainsFetched(true);
+                    setChainsLoading(false);
+                }
+            }
+        })();
+        return () => { cancelled = true; };
     }, [chainOpen, chainsFetched]);
 
     const pinnedIds = useMemo(() => new Set(PINNED_CHAINS.map((c) => c.chainId)), []);
     const otherChains = useMemo(() => allChains.filter((c) => !pinnedIds.has(c.chainId)), [allChains, pinnedIds]);
 
     const applyChainId = (cid: number) => {
-        const updated = { ...config, chainId: cid, stateFile: `/tmp/anvil-state-${cid}.json` };
-        setConfig(updated);
-        // Persist to store immediately so it survives dropdown close/reopen
-        setNodeConfig({ chainId: cid, stateFile: updated.stateFile });
+        setConfig((prev) => ({ ...prev, chainId: cid }));
+        // Persist to the store immediately so it survives dropdown close/reopen.
+        setNodeConfig({ chainId: cid });
         setIsCustom(false);
         setChainOpen(false);
     };
+
+    // A chain profile (or a status poll) can update nodeConfig from elsewhere —
+    // subscribe so the form reflects it without setState during render.
+    useEffect(() => useDevnetStore.subscribe((state, prev) => {
+        if (state.nodeConfig === prev.nodeConfig) return;
+        const nc = state.nodeConfig;
+        setConfig((current) => ({
+            ...current,
+            chainId: nc.chainId ?? current.chainId,
+            port: nc.port ?? current.port,
+            blockTime: nc.blockTime ?? current.blockTime,
+            accounts: nc.accounts ?? current.accounts,
+            balance: nc.balance ?? current.balance,
+            baseFee: nc.baseFee ?? current.baseFee,
+        }));
+        if (nc.forkUrl !== undefined) setForkUrl(nc.forkUrl ?? "");
+        if (nc.forkBlockNumber !== undefined) setForkBlock(nc.forkBlockNumber ? String(nc.forkBlockNumber) : "");
+    }), []);
 
     const selectedLabel = useMemo(() => {
         if (isCustom) return config.chainId ? `Custom — ${config.chainId}` : "Custom";
@@ -125,39 +143,35 @@ export function AnvilControls() {
         try {
             const body = {
                 ...config,
-                ...(forkUrl ? { forkUrl, forkBlockNumber: forkBlock ? parseInt(forkBlock) : undefined } : {}),
+                ...(forkUrl.trim()
+                    ? { forkUrl: forkUrl.trim(), forkBlockNumber: forkBlock ? parseInt(forkBlock, 10) : undefined }
+                    : {}),
             };
-            const res = await fetch("/api/anvil/start", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body),
-            });
-            if (!res.ok) throw new Error((await res.json()).error);
-            const data = await res.json();
-            // Show the resolved (auto-pinned) block number in the UI
-            if (data.forkBlockNumber && !forkBlock) {
-                setForkBlock(String(data.forkBlockNumber));
-            }
+            const data = await api.post<{ port: number; chainId: number; forkBlockNumber: number | null }>(
+                "/api/anvil/start",
+                body
+            );
+            // Surface the auto-pinned fork block so restarts are reproducible.
+            if (data.forkBlockNumber && !forkBlock) setForkBlock(String(data.forkBlockNumber));
             setNodeConfig(body);
-            setPort(config.port);
-            setChainId(config.chainId);
+            setPort(data.port);
+            setChainId(data.chainId);
             setNodeStatus("running");
+            toast(`Anvil running on port ${data.port}`, "success");
         } catch (err: unknown) {
             setNodeStatus("error");
-            const msg = err instanceof Error ? err.message : "Unknown error";
-            toast(`Failed to start: ${msg}`, "error");
+            toast(err instanceof Error ? err.message : "Failed to start Anvil", "error");
         }
     };
 
     const stop = async () => {
         try {
             saveChainSnapshot();
-            await fetch("/api/anvil/stop", { method: "POST" });
+            await api.post("/api/anvil/stop");
             setNodeStatus("stopped");
             toast("Anvil stopped", "success");
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : "Unknown error";
-            toast(`Stop failed: ${msg}`, "error");
+            toast(err instanceof Error ? err.message : "Stop failed", "error");
         }
     };
 
@@ -170,18 +184,19 @@ export function AnvilControls() {
         });
         if (!confirmed) return;
         try {
-            await fetch("/api/anvil/reset", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ chainId: config.chainId, forkUrl }),
-            });
+            const res = await api.post<{ deletedRows: { blocks: number; transactions: number } }>(
+                "/api/anvil/reset",
+                { chainId: config.chainId }
+            );
             setNodeStatus("stopped");
             setForkBlock("");
             resetChainData();
-            toast("Session reset successfully", "success");
+            toast(
+                `Session reset — cleared ${res.deletedRows.blocks} blocks and ${res.deletedRows.transactions} transactions`,
+                "success"
+            );
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : "Unknown error";
-            toast(`Reset failed: ${msg}`, "error");
+            toast(err instanceof Error ? err.message : "Reset failed", "error");
         }
     };
 
@@ -310,10 +325,18 @@ export function AnvilControls() {
                                 <Input className="h-7 font-mono bg-input border-border text-foreground" placeholder="latest" value={forkBlock} onChange={(e) => setForkBlock(e.target.value)} />
                             </div>
                         )}
-                        <div>
-                            <Label className="text-muted-foreground">State File</Label>
-                            <Input className="h-7 font-mono bg-input border-border text-foreground text-xs" value={config.stateFile} onChange={(e) => setConfig({ ...config, stateFile: e.target.value })} />
+                        <div className="flex items-center gap-2 pt-1">
+                            <Checkbox
+                                checked={config.persistState}
+                                onCheckedChange={(checked) => setConfig((prev) => ({ ...prev, persistState: checked }))}
+                            />
+                            <Label className="text-muted-foreground">
+                                Persist state between restarts
+                            </Label>
                         </div>
+                        <p className="text-[10px] text-muted-foreground">
+                            State is dumped per chain/project under your temp directory.
+                        </p>
                     </div>
                 )}
             </CardContent>

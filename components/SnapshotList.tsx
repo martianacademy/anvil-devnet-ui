@@ -1,14 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-    Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
+import { useToast } from "@/components/ui/toast";
+import { api } from "@/lib/apiClient";
+import { useAsyncData } from "@/lib/hooks";
+import { useDevnetStore } from "@/store/useDevnetStore";
+import { timeAgo } from "@/lib/format";
 
 interface Snapshot {
     id: string;
@@ -18,92 +18,96 @@ interface Snapshot {
 }
 
 export function SnapshotList() {
-    const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
+    const { toast } = useToast();
+    const setLatestBlock = useDevnetStore((s) => s.setLatestBlock);
     const [label, setLabel] = useState("");
-    const [loading, setLoading] = useState(false);
-    const [status, setStatus] = useState("");
+    const [busy, setBusy] = useState(false);
 
-    const load = async () => {
-        const data = await fetch("/api/anvil/snapshot").then((r) => r.json());
-        setSnapshots(Array.isArray(data) ? data : []);
-    };
+    const { data: snapshots, loading, reload } = useAsyncData(
+        () => api.get<Snapshot[]>("/api/anvil/snapshot"),
+        [],
+        [] as Snapshot[]
+    );
 
-    useEffect(() => { load(); }, []);
-
-    const takeSnapshot = async () => {
-        setLoading(true);
+    const take = async () => {
+        setBusy(true);
         try {
-            await fetch("/api/anvil/snapshot", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ label: label || `Snapshot ${Date.now()}` }),
-            });
+            const snap = await api.post<{ id: string; label: string; blockNumber: number }>(
+                "/api/anvil/snapshot",
+                { label: label.trim() || undefined }
+            );
+            toast(`Snapshot ${snap.id} taken at block #${snap.blockNumber}`, "success");
             setLabel("");
-            setStatus("✓ Snapshot taken");
-            load();
-        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
-        finally { setLoading(false); }
+            reload();
+        } catch (err) {
+            toast(err instanceof Error ? err.message : "Could not take snapshot", "error");
+        } finally {
+            setBusy(false);
+        }
     };
 
-    const revert = async (id: string) => {
+    const revert = async (snapshot: Snapshot) => {
+        setBusy(true);
         try {
-            await fetch("/api/anvil/revert", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id }),
-            });
-            setStatus(`✓ Reverted to snapshot ${id}`);
-            load();
-        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
+            const res = await api.post<{ success: boolean; blockNumber?: number; error?: string }>("/api/anvil/revert", { id: snapshot.id });
+            if (!res.success) {
+                toast(res.error ?? "Snapshot no longer exists", "error");
+            } else {
+                if (res.blockNumber !== undefined) setLatestBlock(res.blockNumber);
+                toast(`Reverted to "${snapshot.label}"`, "success");
+            }
+            reload();
+        } catch (err) {
+            toast(err instanceof Error ? err.message : "Revert failed", "error");
+        } finally {
+            setBusy(false);
+        }
     };
 
     return (
-        <Card className="bg-gray-900 border-gray-700">
-            <CardHeader className="pb-2">
-                <CardTitle className="text-white text-sm">📸 EVM Snapshots</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-border/60 bg-muted/30 flex items-center justify-between">
+                <span className="text-sm font-semibold text-foreground">📸 EVM Snapshots</span>
+                <Badge variant="secondary" className="text-xs">{snapshots.length}</Badge>
+            </div>
+            <div className="p-4 space-y-3">
                 <div className="flex gap-2">
                     <Input
-                        className="h-8 bg-gray-800 border-gray-600 text-white text-xs"
-                        placeholder="Snapshot label"
+                        className="h-9 text-sm"
+                        placeholder="Snapshot label (optional)"
                         value={label}
                         onChange={(e) => setLabel(e.target.value)}
                     />
-                    <Button size="sm" onClick={takeSnapshot} disabled={loading}>
-                        Take Snapshot
-                    </Button>
+                    <Button size="sm" onClick={take} disabled={busy}>Take Snapshot</Button>
                 </div>
-                {status && <p className="text-green-400 text-xs">{status}</p>}
-                {snapshots.length > 0 ? (
-                    <Table>
-                        <TableHeader>
-                            <TableRow className="border-gray-700">
-                                <TableHead className="text-gray-400 text-xs">ID</TableHead>
-                                <TableHead className="text-gray-400 text-xs">Label</TableHead>
-                                <TableHead className="text-gray-400 text-xs">Block</TableHead>
-                                <TableHead className="text-gray-400 text-xs"></TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {snapshots.map((s) => (
-                                <TableRow key={s.id} className="border-gray-800">
-                                    <TableCell className="font-mono text-xs text-gray-300">{s.id}</TableCell>
-                                    <TableCell className="text-xs text-white">{s.label}</TableCell>
-                                    <TableCell className="font-mono text-xs text-gray-300">{s.block_number}</TableCell>
-                                    <TableCell>
-                                        <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => revert(s.id)}>
-                                            Revert
-                                        </Button>
-                                    </TableCell>
-                                </TableRow>
-                            ))}
-                        </TableBody>
-                    </Table>
+
+                <p className="text-muted-foreground text-[11px]">
+                    Reverting consumes the snapshot and every snapshot taken after it.
+                </p>
+
+                {loading ? (
+                    <p className="text-muted-foreground text-xs">Loading…</p>
+                ) : snapshots.length === 0 ? (
+                    <p className="text-muted-foreground text-xs">No snapshots yet.</p>
                 ) : (
-                    <p className="text-gray-500 text-xs">No snapshots yet</p>
+                    <div className="space-y-1">
+                        {snapshots.map((s) => (
+                            <div key={s.id} className="flex items-center gap-3 py-2 border-b border-border/30 last:border-0">
+                                <Badge variant="outline" className="font-mono text-[10px]">{s.id}</Badge>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-xs text-foreground truncate">{s.label}</p>
+                                    <p className="text-[10px] text-muted-foreground font-mono">
+                                        block #{s.block_number} · {timeAgo(Math.floor(s.created_at / 1000))}
+                                    </p>
+                                </div>
+                                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => revert(s)}>
+                                    Revert
+                                </Button>
+                            </div>
+                        ))}
+                    </div>
                 )}
-            </CardContent>
-        </Card>
+            </div>
+        </div>
     );
 }

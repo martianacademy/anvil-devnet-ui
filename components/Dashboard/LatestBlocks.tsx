@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Blocks, Clock, TrendingUp, ChevronRight } from "lucide-react";
+import { Blocks, Clock, ChevronRight } from "lucide-react";
 
 interface BlockRow {
   number: number;
@@ -12,6 +12,8 @@ interface BlockRow {
 interface LatestBlocksProps {
   blocks: BlockRow[];
   nodeStatus: string;
+  /** True until the first fetch resolves — after that, empty means empty. */
+  loading?: boolean;
 }
 
 function timeAgo(ts: number) {
@@ -38,7 +40,7 @@ function BlockSkeleton() {
   );
 }
 
-export function LatestBlocks({ blocks, nodeStatus }: LatestBlocksProps) {
+export function LatestBlocks({ blocks, nodeStatus, loading = false }: LatestBlocksProps) {
   return (
     <div className="bg-card/80 border border-border/60 rounded-2xl overflow-hidden card-glow backdrop-blur-sm">
       <div className="flex items-center justify-between px-5 py-3.5 border-b border-border/50">
@@ -58,7 +60,7 @@ export function LatestBlocks({ blocks, nodeStatus }: LatestBlocksProps) {
 
       <div className="divide-y divide-border/40">
         {blocks.length === 0 ? (
-          nodeStatus === "running" ? (
+          loading && nodeStatus === "running" ? (
             <>
               <BlockSkeleton />
               <BlockSkeleton />
@@ -67,7 +69,9 @@ export function LatestBlocks({ blocks, nodeStatus }: LatestBlocksProps) {
           ) : (
             <div className="px-5 py-10 flex flex-col items-center gap-2 text-center">
               <Blocks className="w-8 h-8 text-muted-foreground/30" />
-              <p className="text-muted-foreground text-sm">Start Anvil to see blocks</p>
+              <p className="text-muted-foreground text-sm">
+                {nodeStatus === "running" ? "Waiting for the first block…" : "Start Anvil to see blocks"}
+              </p>
             </div>
           )
         ) : (

@@ -1,14 +1,17 @@
-import { NextResponse } from "next/server";
 import { rpc } from "@/lib/rpc";
+import { resolveFromRequest } from "@/lib/activeProject";
+import { assertInt } from "@/lib/validate";
+import { handleRoute } from "@/lib/route";
 
 export async function POST(req: Request) {
-    try {
-        const { blocks = 1 } = await req.json();
-        await rpc("evm_mine", [{ blocks }]);
-        const blockHex = await rpc("eth_blockNumber", []) as string;
-        const blockNumber = parseInt(blockHex, 16);
-        return NextResponse.json({ success: true, blockNumber });
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+    return handleRoute(async () => {
+        const body = await req.json().catch(() => ({}));
+        const blocks = assertInt(body.blocks ?? 1, "blocks", 1, 10_000);
+        const { port } = resolveFromRequest(req);
+
+        // `evm_mine` only accepts a timestamp — mining N blocks is `anvil_mine`.
+        await rpc("anvil_mine", [`0x${blocks.toString(16)}`], port);
+        const blockHex = await rpc<string>("eth_blockNumber", [], port);
+        return { success: true, blockNumber: parseInt(blockHex, 16) };
+    });
 }

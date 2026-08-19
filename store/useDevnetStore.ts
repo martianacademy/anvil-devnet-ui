@@ -38,6 +38,8 @@ interface DevnetStore {
     latestBlock: number;
     chainId: number;
     port: number;
+    gasPrice: string | null;
+    lanIp: string | null;
 
     // Per-chain data cache (keyed by chainId)
     chainData: Record<number, ChainSnapshot>;
@@ -60,6 +62,7 @@ interface DevnetStore {
     setLatestBlock: (n: number) => void;
     setChainId: (id: number) => void;
     setPort: (p: number) => void;
+    setNetworkInfo: (info: { gasPrice?: string | null; lanIp?: string | null }) => void;
     saveChainSnapshot: () => void;
     addTransactions: (txs: TxSummary[]) => void;
     clearTransactions: () => void;
@@ -87,6 +90,8 @@ export const useDevnetStore = create<DevnetStore>((set) => ({
     latestBlock: 0,
     chainId: 31337,
     port: 8545,
+    gasPrice: null,
+    lanIp: null,
     chainData: {},
     transactions: [],
     selectedTx: null,
@@ -120,6 +125,11 @@ export const useDevnetStore = create<DevnetStore>((set) => ({
             };
         }),
     setPort: (p) => set({ port: p }),
+    setNetworkInfo: (info) =>
+        set((state) => ({
+            gasPrice: info.gasPrice === undefined ? state.gasPrice : info.gasPrice,
+            lanIp: info.lanIp === undefined ? state.lanIp : info.lanIp,
+        })),
     /** Manually persist current chain data (call before intentional stop) */
     saveChainSnapshot: () =>
         set((state) => ({

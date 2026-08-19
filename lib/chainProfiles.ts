@@ -1,4 +1,4 @@
-import { getDB } from "./db";
+import { getDB } from "./db.ts";
 
 export interface ChainProfile {
     id?: number;

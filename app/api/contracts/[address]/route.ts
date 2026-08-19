@@ -1,42 +1,26 @@
-import { NextResponse } from "next/server";
-import { getContract, autoFetchABI } from "@/lib/abiRegistry";
-import { getDB } from "@/lib/db";
-import { getAnvilState } from "@/lib/anvilProcess";
+import { autoFetchABI, deleteContract, getContract } from "@/lib/abiRegistry";
+import { resolveFromRequest } from "@/lib/activeProject";
+import { HttpError, assertAddress } from "@/lib/validate";
+import { handleRoute } from "@/lib/route";
 
-export async function GET(
-    req: Request,
-    { params }: { params: Promise<{ address: string }> }
-) {
-    try {
-        const { address } = await params;
-        const contract = getContract(address);
+export const dynamic = "force-dynamic";
 
-        if (!contract) {
-            const state = getAnvilState();
-            const chainId = state.config?.chainId ?? 1;
-            const abi = await autoFetchABI(address, chainId);
-            if (!abi) {
-                return NextResponse.json({ error: "Contract not found" }, { status: 404 });
-            }
-            return NextResponse.json(getContract(address));
-        }
+export async function GET(req: Request, { params }: { params: Promise<{ address: string }> }) {
+    return handleRoute(async () => {
+        const address = assertAddress((await params).address);
+        const local = getContract(address);
+        if (local) return local;
 
-        return NextResponse.json(contract);
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+        const { chainId } = resolveFromRequest(req);
+        const abi = await autoFetchABI(address, chainId);
+        if (!abi) throw new HttpError(404, "Contract not found — upload an ABI or verify it on Sourcify/Etherscan");
+        return getContract(address);
+    });
 }
 
-export async function DELETE(
-    req: Request,
-    { params }: { params: Promise<{ address: string }> }
-) {
-    try {
-        const { address } = await params;
-        const db = getDB();
-        db.prepare("DELETE FROM contracts WHERE lower(address) = ?").run(address.toLowerCase());
-        return NextResponse.json({ success: true });
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+export async function DELETE(_req: Request, { params }: { params: Promise<{ address: string }> }) {
+    return handleRoute(async () => {
+        const address = assertAddress((await params).address);
+        return { success: deleteContract(address) };
+    });
 }

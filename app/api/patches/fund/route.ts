@@ -1,38 +1,43 @@
-import { NextResponse } from "next/server";
+import { getDB, scopeId } from "@/lib/db";
 import { fundNative } from "@/lib/patcher";
 import { setTokenBalance } from "@/lib/tokenBalances";
-import { getDB } from "@/lib/db";
-import { getAnvilState } from "@/lib/anvilProcess";
+import { resolveFromRequest } from "@/lib/activeProject";
+import { ValidationError, assertAddress, assertAmount, assertInt } from "@/lib/validate";
+import { handleRoute } from "@/lib/route";
+import { parseUnits } from "viem";
 
 export async function POST(req: Request) {
-    try {
+    return handleRoute(async () => {
         const body = await req.json();
-        const { type, address, amount, token, decimals = 18, mappingSlot } = body;
-        const port = getAnvilState().config?.port ?? 8545;
+        const active = resolveFromRequest(req);
+        const address = assertAddress(body.address, "address");
+        const amount = assertAmount(body.amount, "amount");
 
-        if (type === "native") {
-            await fundNative(address, amount, port);
-        } else if (type === "erc20") {
-            const amountBig = BigInt(Math.floor(parseFloat(amount) * 10 ** decimals));
-            await setTokenBalance(token, address, amountBig, port, mappingSlot);
+        if (body.type === "native") {
+            await fundNative(address, amount, active.port);
+        } else if (body.type === "erc20") {
+            const token = assertAddress(body.token, "token");
+            const decimals = assertInt(body.decimals ?? 18, "decimals", 0, 36);
+            const mappingSlot = body.mappingSlot === undefined || body.mappingSlot === null
+                ? undefined
+                : assertInt(body.mappingSlot, "mappingSlot", 0, 200);
+            // parseUnits keeps full precision — float math loses it above ~15 digits.
+            await setTokenBalance(token, address, parseUnits(amount, decimals), active.port, mappingSlot);
         } else {
-            return NextResponse.json({ error: "Unknown fund type" }, { status: 400 });
+            throw new ValidationError(`Unknown fund type: ${body.type}`);
         }
 
-        // Log to patch history
-        const db = getDB();
-        db.prepare(`
-      INSERT INTO patch_history (type, target_address, payload, applied_at)
-      VALUES (?, ?, ?, ?)
+        getDB().prepare(`
+      INSERT INTO patch_history (type, target_address, payload, applied_at, project_id)
+      VALUES (?, ?, ?, ?, ?)
     `).run(
-            type === "native" ? "fund_native" : "fund_erc20",
+            body.type === "native" ? "fund_native" : "fund_erc20",
             address,
             JSON.stringify(body),
-            Date.now()
+            Date.now(),
+            scopeId(active.projectId)
         );
 
-        return NextResponse.json({ success: true });
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+        return { success: true };
+    });
 }

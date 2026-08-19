@@ -6,11 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import type { EvmStep, CallNode } from "@/lib/traceParser";
-import type { TraceFilters, TraceEntry } from "./types";
+import type { TraceFilters } from "./types";
 import { TraceRow } from "./TraceRow";
 import { structLogsToEntries, callTraceToEntries } from "./utils";
 import { decodeCallWithAbi, decodeLogWithAbi } from "./abiDecode";
 import type { Abi } from "viem";
+import { api } from "@/lib/apiClient";
 
 interface Props {
     steps: EvmStep[];
@@ -42,26 +43,29 @@ export function TraceLog({ steps, callTrace, traceError, txTo }: Props) {
         return [];
     }, [steps, callTrace]);
 
-    // Collect unique addresses from entries and fetch ABIs
+    // Collect every address the trace touches and resolve their ABIs in one request.
     useEffect(() => {
         const addrs = new Set<string>();
         if (txTo) addrs.add(txTo.toLowerCase());
         for (const e of rawEntries) {
             if (e.to) addrs.add(e.to.toLowerCase());
         }
-        const toFetch = [...addrs].filter((a) => a !== "0x" && a.length === 42);
+        const toFetch = [...addrs].filter((a) => /^0x[0-9a-f]{40}$/.test(a));
         if (toFetch.length === 0) return;
 
-        setAbiFetching(true);
-        fetch("/api/abi/batch", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ addresses: toFetch }),
-        })
-            .then((r) => r.json())
-            .then((data) => setAbiMap(data.abis ?? {}))
-            .catch(() => { /* ignore */ })
-            .finally(() => setAbiFetching(false));
+        let cancelled = false;
+        void (async () => {
+            setAbiFetching(true);
+            try {
+                const data = await api.post<{ abis: Record<string, Abi> }>("/api/abi/batch", { addresses: toFetch });
+                if (!cancelled) setAbiMap(data.abis ?? {});
+            } catch {
+                /* unresolved ABIs just mean raw selectors in the log */
+            } finally {
+                if (!cancelled) setAbiFetching(false);
+            }
+        })();
+        return () => { cancelled = true; };
     }, [rawEntries, txTo]);
 
     // Enhance entries with ABI decoding

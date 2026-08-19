@@ -1,4 +1,4 @@
-import { decodeInput, decodeEvent, getName } from "./abiRegistry";
+import { decodeInput, getName } from "./abiRegistry.ts";
 
 export interface DecodedTx {
     functionName?: string;

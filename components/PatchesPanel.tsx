@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToast } from "@/components/ui/toast";
+import { api } from "@/lib/apiClient";
 
 export function PatchesPanel() {
     const [nativeAddr, setNativeAddr] = useState("");
@@ -17,45 +19,57 @@ export function PatchesPanel() {
     const [storageSlot, setStorageSlot] = useState("");
     const [storageValue, setStorageValue] = useState("");
     const [currentSlotValue, setCurrentSlotValue] = useState("");
-    const [status, setStatus] = useState("");
+    const [busy, setBusy] = useState(false);
+    const { toast } = useToast();
 
     const fund = async (type: "native" | "erc20") => {
+        setBusy(true);
         try {
             const body = type === "native"
-                ? { type: "native", address: nativeAddr, amount: nativeAmount }
-                : { type: "erc20", address: erc20Wallet, token: erc20Token, amount: erc20Amount, decimals: parseInt(erc20Decimals) };
-            const res = await fetch("/api/patches/fund", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body),
-            });
-            const data = await res.json();
-            if (data.error) throw new Error(data.error);
-            setStatus(`✓ Funded successfully`);
-        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
+                ? { type: "native", address: nativeAddr.trim(), amount: nativeAmount.trim() }
+                : {
+                    type: "erc20",
+                    address: erc20Wallet.trim(),
+                    token: erc20Token.trim(),
+                    amount: erc20Amount.trim(),
+                    decimals: parseInt(erc20Decimals, 10),
+                };
+            await api.post("/api/patches/fund", body);
+            toast(type === "native" ? `Funded ${nativeAmount} ETH` : `Funded ${erc20Amount} tokens`, "success");
+        } catch (err) {
+            toast(err instanceof Error ? err.message : "Funding failed", "error");
+        } finally {
+            setBusy(false);
+        }
     };
 
     const readSlot = async () => {
-        if (!storageContract || !storageSlot) return;
+        if (!storageContract.trim() || !storageSlot.trim()) return;
         try {
-            const res = await fetch(`/api/patches/storage?contract=${storageContract}&slot=${storageSlot}`);
-            const data = await res.json();
+            const data = await api.get<{ value: string }>(
+                `/api/patches/storage?contract=${encodeURIComponent(storageContract.trim())}&slot=${encodeURIComponent(storageSlot.trim())}`
+            );
             setCurrentSlotValue(data.value);
-        } catch { /* ignore */ }
+        } catch {
+            setCurrentSlotValue("");
+        }
     };
 
     const writeSlot = async () => {
+        setBusy(true);
         try {
-            const res = await fetch("/api/patches/storage", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ contract: storageContract, slot: storageSlot, value: storageValue }),
+            await api.post("/api/patches/storage", {
+                contract: storageContract.trim(),
+                slot: storageSlot.trim(),
+                value: storageValue.trim(),
             });
-            const data = await res.json();
-            if (data.error) throw new Error(data.error);
-            setStatus("✓ Storage slot written");
-            readSlot();
-        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
+            toast("Storage slot written", "success");
+            await readSlot();
+        } catch (err) {
+            toast(err instanceof Error ? err.message : "Storage write failed", "error");
+        } finally {
+            setBusy(false);
+        }
     };
 
     return (
@@ -83,7 +97,7 @@ export function PatchesPanel() {
                                 <Input className="h-9 text-sm"
                                     value={nativeAmount} onChange={(e) => setNativeAmount(e.target.value)} />
                             </div>
-                            <Button size="sm" onClick={() => fund("native")} className="w-full sm:w-auto">Fund Native</Button>
+                            <Button size="sm" onClick={() => fund("native")} disabled={busy || !nativeAddr.trim()} className="w-full sm:w-auto">Fund Native</Button>
                         </div>
                     </TabsContent>
 
@@ -111,7 +125,7 @@ export function PatchesPanel() {
                                         value={erc20Decimals} onChange={(e) => setErc20Decimals(e.target.value)} />
                                 </div>
                             </div>
-                            <Button size="sm" onClick={() => fund("erc20")} className="w-full sm:w-auto">Fund ERC20</Button>
+                            <Button size="sm" onClick={() => fund("erc20")} disabled={busy || !erc20Token.trim() || !erc20Wallet.trim()} className="w-full sm:w-auto">Fund ERC20</Button>
                         </div>
                     </TabsContent>
 
@@ -139,17 +153,10 @@ export function PatchesPanel() {
                                 <Input className="h-9 font-mono text-sm"
                                     placeholder="0x0" value={storageValue} onChange={(e) => setStorageValue(e.target.value)} />
                             </div>
-                            <Button size="sm" onClick={writeSlot} className="w-full sm:w-auto">Write Slot</Button>
+                            <Button size="sm" onClick={writeSlot} disabled={busy || !storageContract.trim() || !storageValue.trim()} className="w-full sm:w-auto">Write Slot</Button>
                         </div>
                     </TabsContent>
                 </Tabs>
-
-                {status && (
-                    <div className={`rounded-lg px-3 py-2 text-xs font-mono border ${status.startsWith("Error")
-                        ? "bg-red-500/10 border-red-500/30 text-red-400"
-                        : "bg-green-500/10 border-green-500/30 text-green-400"
-                        }`}>{status}</div>
-                )}
             </div>
         </div>
     );

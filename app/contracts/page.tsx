@@ -1,37 +1,48 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { ContractUpload } from "@/components/ContractUpload";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Trash2 } from "lucide-react";
 import Link from "next/link";
+import { api } from "@/lib/apiClient";
+import { useAsyncData } from "@/lib/hooks";
+import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { truncateHex } from "@/lib/format";
 
 interface ContractRecord {
     address: string;
     name: string;
-    abi: string | null;
-    source: string | null;
-    createdAt: number;
+    abiMethodCount: number;
+    hasSource: boolean;
+    verified_at: number;
 }
 
 export default function ContractsPage() {
-    const [contracts, setContracts] = useState<ContractRecord[]>([]);
-    const [loading, setLoading] = useState(true);
-
-    const load = () => {
-        fetch("/api/contracts")
-            .then((r) => r.json())
-            .then((data) => setContracts(data.contracts ?? []))
-            .catch(() => { })
-            .finally(() => setLoading(false));
-    };
-
-    useEffect(() => { load(); }, []);
+    const { toast } = useToast();
+    const { confirm } = useConfirm();
+    const { data: contracts, loading, error, reload } = useAsyncData(
+        () => api.get<ContractRecord[]>("/api/contracts"),
+        [],
+        [] as ContractRecord[]
+    );
 
     const remove = async (address: string) => {
-        await fetch(`/api/contracts/${address}`, { method: "DELETE" });
-        load();
+        const ok = await confirm({
+            title: "Remove contract?",
+            description: `${truncateHex(address, 10, 8)} will be removed from the local ABI registry.`,
+            confirmLabel: "Remove",
+            variant: "destructive",
+        });
+        if (!ok) return;
+        try {
+            await api.del(`/api/contracts/${address}`);
+            toast("Contract removed", "success");
+            reload();
+        } catch (err) {
+            toast(err instanceof Error ? err.message : "Failed to remove contract", "error");
+        }
     };
 
     return (
@@ -44,7 +55,7 @@ export default function ContractsPage() {
                 <Badge variant="secondary" className="text-xs">{contracts.length}</Badge>
             </div>
 
-            <ContractUpload onRegistered={load} />
+            <ContractUpload onRegistered={reload} />
 
             <div className="rounded-xl border border-border bg-card overflow-hidden">
                 <div className="px-5 py-4 border-b border-border/60 bg-muted/30">
@@ -53,6 +64,8 @@ export default function ContractsPage() {
                 <div className="p-3">
                     {loading ? (
                         <p className="p-2 text-muted-foreground text-sm">Loading…</p>
+                    ) : error ? (
+                        <p className="p-2 text-muted-foreground text-sm">Could not load contracts: {error}</p>
                     ) : contracts.length === 0 ? (
                         <p className="p-2 text-muted-foreground text-sm">No contracts registered yet.</p>
                     ) : (
@@ -66,8 +79,8 @@ export default function ContractsPage() {
                                         <span className="text-muted-foreground text-xs font-mono ml-2">{c.name}</span>
                                     </div>
                                     <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-                                        {c.abi && <Badge variant="secondary" className="text-xs">ABI</Badge>}
-                                        {c.source && <Badge variant="secondary" className="text-xs">Source</Badge>}
+                                        <Badge variant="secondary" className="text-xs">{c.abiMethodCount} fn</Badge>
+                                        {c.hasSource && <Badge variant="secondary" className="text-xs">Source</Badge>}
                                         <Button variant="ghost" size="sm" onClick={() => remove(c.address)} className="h-7 w-7 p-0 text-red-400 hover:text-red-300 hover:bg-red-500/10">
                                             <Trash2 className="w-3.5 h-3.5" />
                                         </Button>

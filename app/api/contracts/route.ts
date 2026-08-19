@@ -1,30 +1,37 @@
-import { NextResponse } from "next/server";
-import { saveContract, getAllContracts } from "@/lib/abiRegistry";
+import { getAllContracts, saveContract } from "@/lib/abiRegistry";
+import { ValidationError, assertAddress, assertNonEmptyString } from "@/lib/validate";
+import { handleRoute } from "@/lib/route";
+import type { Abi } from "viem";
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
-    try {
-        const contracts = getAllContracts();
-        return NextResponse.json(contracts.map((c) => ({
+    return handleRoute(async () =>
+        getAllContracts().map((c) => ({
             address: c.address,
             name: c.name,
-            abiMethodCount: Array.isArray(c.abi) ? (c.abi as unknown as Array<{ type: string }>).filter((x) => x.type === "function").length : 0,
+            abiMethodCount: c.abi.filter((x) => x.type === "function").length,
+            hasSource: Boolean(c.source),
             verified_at: c.verified_at,
-        })));
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+        }))
+    );
 }
 
 export async function POST(req: Request) {
-    try {
+    return handleRoute(async () => {
         const { address, name, abi, source } = await req.json();
-        if (!address || !name || !abi) {
-            return NextResponse.json({ error: "address, name, and abi are required" }, { status: 400 });
+        const target = assertAddress(address);
+        const contractName = assertNonEmptyString(name, "name", 100);
+
+        let parsed: Abi;
+        try {
+            parsed = typeof abi === "string" ? JSON.parse(abi) : abi;
+        } catch {
+            throw new ValidationError("abi must be valid JSON");
         }
-        const parsedAbi = typeof abi === "string" ? JSON.parse(abi) : abi;
-        saveContract(address, name, parsedAbi, source);
-        return NextResponse.json({ success: true });
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+        if (!Array.isArray(parsed)) throw new ValidationError("abi must be a JSON array");
+
+        saveContract(target, contractName, parsed, typeof source === "string" ? source : undefined);
+        return { success: true, address: target, name: contractName };
+    });
 }

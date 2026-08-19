@@ -1,18 +1,14 @@
 import Link from "next/link";
-import { ArrowRightLeft, TrendingUp, ChevronRight } from "lucide-react";
+import { ArrowRightLeft, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { formatEther } from "viem";
 import type { TxSummary } from "@/store/useDevnetStore";
+import { formatEth, truncateHex } from "@/lib/format";
 
 interface LatestTransactionsProps {
   transactions: TxSummary[];
   nodeStatus: string;
-}
-
-function truncate(s: string, n = 16) {
-  if (!s) return "—";
-  if (s.length <= n) return s;
-  return `${s.slice(0, 8)}…${s.slice(-6)}`;
+  /** True until the first fetch resolves — after that, empty means empty. */
+  loading?: boolean;
 }
 
 function TxSkeleton() {
@@ -31,7 +27,7 @@ function TxSkeleton() {
   );
 }
 
-export function LatestTransactions({ transactions, nodeStatus }: LatestTransactionsProps) {
+export function LatestTransactions({ transactions, nodeStatus, loading = false }: LatestTransactionsProps) {
   const recentTxs = transactions.slice(0, 6);
 
   return (
@@ -53,7 +49,7 @@ export function LatestTransactions({ transactions, nodeStatus }: LatestTransacti
 
       <div className="divide-y divide-border/40">
         {recentTxs.length === 0 ? (
-          nodeStatus === "running" ? (
+          loading && nodeStatus === "running" ? (
             <>
               <TxSkeleton />
               <TxSkeleton />
@@ -62,7 +58,11 @@ export function LatestTransactions({ transactions, nodeStatus }: LatestTransacti
           ) : (
             <div className="px-5 py-10 flex flex-col items-center gap-2 text-center">
               <ArrowRightLeft className="w-8 h-8 text-muted-foreground/30" />
-              <p className="text-muted-foreground text-sm">Start Anvil to see transactions</p>
+              <p className="text-muted-foreground text-sm">
+                {nodeStatus === "running"
+                  ? "No transactions yet — send one and it shows up here instantly"
+                  : "Start Anvil to see transactions"}
+              </p>
             </div>
           )
         ) : (
@@ -73,13 +73,13 @@ export function LatestTransactions({ transactions, nodeStatus }: LatestTransacti
               </div>
               <div className="flex-1 min-w-0">
                 <Link href={`/tx/${tx.hash}`} className="text-primary hover:underline font-mono text-sm font-bold">
-                  {truncate(tx.hash, 20)}
+                  {truncateHex(tx.hash, 10, 8)}
                 </Link>
                 <div className="text-muted-foreground text-[11px] mt-0.5 font-mono truncate">
                   <span>From </span>
-                  <span className="text-foreground/70">{truncate(tx.from_address)}</span>
+                  <span className="text-foreground/70">{truncateHex(tx.from_address)}</span>
                   {tx.to_address && (
-                    <><span> → </span><span className="text-foreground/70">{truncate(tx.to_address)}</span></>
+                    <><span> → </span><span className="text-foreground/70">{truncateHex(tx.to_address)}</span></>
                   )}
                 </div>
                 {tx.decoded_function && (
@@ -96,9 +96,7 @@ export function LatestTransactions({ transactions, nodeStatus }: LatestTransacti
                   {tx.status === 1 ? "✓" : "✗"}
                 </Badge>
                 <div className="text-muted-foreground text-[10px] font-mono">
-                  {tx.value && BigInt(tx.value) > 0n
-                    ? `${parseFloat(formatEther(BigInt(tx.value))).toFixed(4)} ETH`
-                    : "0 ETH"}
+                  {formatEth(tx.value, 4)} ETH
                 </div>
               </div>
             </div>

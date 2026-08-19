@@ -5,14 +5,26 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { api } from "@/lib/apiClient";
+import { formatNumber } from "@/lib/format";
+import { parseEther } from "viem";
+
+interface SimEvent {
+    address?: string;
+    topics?: string[];
+    contractName?: string | null;
+    eventName?: string | null;
+    args?: Record<string, unknown> | null;
+}
 
 interface SimResult {
     success?: boolean;
-    error?: string;
-    gasEstimate?: string;
-    returnData?: string;
+    error?: string | null;
+    gasEstimate?: string | null;
+    gasUsed?: string | null;
+    returnData?: string | null;
     sstores?: { slot: string; value: string }[];
-    events?: { topics?: string[] }[];
+    events?: SimEvent[];
 }
 
 export function CallSimulator() {
@@ -27,19 +39,17 @@ export function CallSimulator() {
         setLoading(true);
         setResult(null);
         try {
-            const res = await fetch("/api/simulate", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    to,
-                    from: from || undefined,
-                    data: data || "0x",
-                    value: value ? `0x${BigInt(Math.floor(parseFloat(value) * 1e18)).toString(16)}` : "0x0",
-                }),
+            // parseEther keeps full wei precision — float maths silently rounds.
+            const weiValue = value.trim() ? parseEther(value.trim()) : 0n;
+            const res = await api.post<SimResult>("/api/simulate", {
+                to: to.trim(),
+                from: from.trim() || undefined,
+                data: data.trim() || "0x",
+                value: `0x${weiValue.toString(16)}`,
             });
-            setResult(await res.json());
+            setResult(res);
         } catch (e: unknown) {
-            setResult({ error: e instanceof Error ? e.message : "Unknown error" });
+            setResult({ success: false, error: e instanceof Error ? e.message : "Simulation failed" });
         } finally {
             setLoading(false);
         }
@@ -90,10 +100,13 @@ export function CallSimulator() {
                     <div className="p-4 space-y-2 text-xs font-mono">
                         {result.error && <p className="text-red-400">{result.error}</p>}
                         {result.gasEstimate && (
-                            <p className="text-muted-foreground">Gas estimate: <span className="text-foreground">{parseInt(result.gasEstimate).toLocaleString()}</span></p>
+                            <p className="text-muted-foreground">Gas estimate: <span className="text-foreground">{formatNumber(result.gasEstimate)}</span></p>
+                        )}
+                        {result.gasUsed && (
+                            <p className="text-muted-foreground">Gas used: <span className="text-foreground">{formatNumber(result.gasUsed)}</span></p>
                         )}
                         {result.returnData && result.returnData !== "0x" && (
-                            <p className="text-muted-foreground">Return data: <span className="text-green-400 break-all">{result.returnData}</span></p>
+                            <p className="text-muted-foreground">Return data: <span className="text-emerald-400 break-all">{result.returnData}</span></p>
                         )}
                         {result.sstores && result.sstores.length > 0 && (
                             <div>
@@ -108,8 +121,13 @@ export function CallSimulator() {
                         {result.events && result.events.length > 0 && (
                             <div>
                                 <p className="text-blue-400 font-semibold mb-1">Events emitted: {result.events.length}</p>
-                                {result.events.slice(0, 3).map((e, i) => (
-                                    <p key={i} className="text-muted-foreground truncate">{e.topics?.[0]?.slice(0, 18)}…</p>
+                                {result.events.slice(0, 5).map((e, i) => (
+                                    <p key={i} className="text-muted-foreground truncate">
+                                        {e.eventName
+                                            ? <span className="text-foreground">{e.contractName ? `${e.contractName}.` : ""}{e.eventName}</span>
+                                            : <span>{e.topics?.[0]?.slice(0, 18)}…</span>}
+                                        {e.args && <span className="ml-1 opacity-70">{JSON.stringify(e.args)}</span>}
+                                    </p>
                                 ))}
                             </div>
                         )}

@@ -1,84 +1,85 @@
-import { NextResponse } from "next/server";
-import { getAnvilState, isAnvilRunning } from "@/lib/anvilProcess";
 import os from "os";
+import { getAnvilState, isAnvilRunning } from "@/lib/anvilProcess";
+import { resolveFromRequest } from "@/lib/activeProject";
+import { handleRoute } from "@/lib/route";
+
+export const dynamic = "force-dynamic";
 
 function getLanIp(): string | null {
-    const interfaces = os.networkInterfaces();
-    for (const name of Object.keys(interfaces)) {
-        for (const iface of interfaces[name] ?? []) {
-            if (iface.family === "IPv4" && !iface.internal) {
-                return iface.address;
-            }
+    for (const addrs of Object.values(os.networkInterfaces())) {
+        for (const iface of addrs ?? []) {
+            if (iface.family === "IPv4" && !iface.internal) return iface.address;
         }
     }
     return null;
 }
 
-async function probePort(port: number): Promise<{ blockNumber: number; chainId: number } | null> {
-    try {
-        const rpc = (method: string, id: number) =>
-            fetch(`http://127.0.0.1:${port}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ jsonrpc: "2.0", method, params: [], id }),
-                signal: AbortSignal.timeout(600),
-            }).then((r) => r.json());
+interface Probe {
+    blockNumber: number;
+    chainId: number;
+    gasPrice: string | null;
+}
 
-        const [blk, chain] = await Promise.all([
-            rpc("eth_blockNumber", 1),
-            rpc("eth_chainId", 2),
-        ]);
-        if (!blk.result) return null;
+/** One batched round trip: is anything alive on this port, and what is it? */
+async function probePort(port: number): Promise<Probe | null> {
+    try {
+        const res = await fetch(`http://127.0.0.1:${port}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify([
+                { jsonrpc: "2.0", method: "eth_blockNumber", params: [], id: 0 },
+                { jsonrpc: "2.0", method: "eth_chainId", params: [], id: 1 },
+                { jsonrpc: "2.0", method: "eth_gasPrice", params: [], id: 2 },
+            ]),
+            signal: AbortSignal.timeout(800),
+        });
+        if (!res.ok) return null;
+        const rows = (await res.json()) as { id: number; result?: string }[];
+        if (!Array.isArray(rows)) return null;
+        const byId = new Map(rows.map((r) => [r.id, r.result]));
+        const blockHex = byId.get(0);
+        if (!blockHex) return null;
         return {
-            blockNumber: parseInt(blk.result, 16),
-            chainId: chain.result ? parseInt(chain.result, 16) : 31337,
+            blockNumber: parseInt(blockHex, 16),
+            chainId: byId.get(1) ? parseInt(byId.get(1) as string, 16) : 31337,
+            gasPrice: byId.get(2) ?? null,
         };
     } catch {
         return null;
     }
 }
 
-export async function GET() {
-    try {
-        const state = getAnvilState();
-        const configuredPort = state.config?.port ?? 8545;
+export async function GET(req: Request) {
+    return handleRoute(async () => {
+        const active = resolveFromRequest(req);
+        const state = getAnvilState(active.projectId ?? undefined);
 
-        let running = isAnvilRunning();
-        let port = configuredPort;
-        let blockNumber = 0;
-        let chainId: number | null = state.config?.chainId ?? null;
+        // Probe the resolved port first, then the configured default as a fallback
+        // (covers an anvil started outside the UI).
+        const fallbackPort = Number(process.env.DEVNET_RPC_PORT ?? 8545) || 8545;
+        const ports = [...new Set([active.port, fallbackPort])];
+        const probes = await Promise.all(ports.map(probePort));
+        const index = probes.findIndex((p) => p !== null);
+        const probe = index === -1 ? null : probes[index];
 
-        const portsToTry = [...new Set([configuredPort, 8545])];
-        for (const p of portsToTry) {
-            const probe = await probePort(p);
-            if (probe) {
-                running = true;
-                port = p;
-                blockNumber = probe.blockNumber;
-                chainId = probe.chainId;
-                break;
-            }
-        }
+        const running = probe !== null || isAnvilRunning(active.projectId ?? undefined);
+        const port = index === -1 ? active.port : ports[index];
+        const chainId = probe?.chainId ?? active.chainId;
 
-        if (!running) {
-            running = isAnvilRunning();
-        }
-
-        return NextResponse.json({
+        return {
             running,
+            managed: isAnvilRunning(active.projectId ?? undefined),
             pid: state.proc?.pid ?? null,
             port,
             chainId,
-            blockNumber,
+            blockNumber: probe?.blockNumber ?? 0,
+            gasPrice: probe?.gasPrice ?? null,
             lanIp: getLanIp(),
+            rpcUrl: `http://127.0.0.1:${port}`,
             uptime: state.startedAt ? Math.floor((Date.now() - state.startedAt) / 1000) : 0,
-            config: running
-                ? { ...(state.config ?? {}), port, chainId }
-                : state.config,
-        });
-    } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        return NextResponse.json({ error: msg }, { status: 500 });
-    }
+            projectId: active.projectId,
+            lastError: state.lastError,
+            config: state.config ? { ...state.config, port, chainId } : null,
+        };
+    });
 }
-

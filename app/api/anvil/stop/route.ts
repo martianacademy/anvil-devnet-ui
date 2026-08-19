@@ -1,12 +1,14 @@
-import { NextResponse } from "next/server";
-import { stopAnvil, getAnvilState } from "@/lib/anvilProcess";
+import { stopAnvil } from "@/lib/anvilProcess";
+import { resolveFromRequest, invalidateActiveProjectCache } from "@/lib/activeProject";
+import { resetRpcClients } from "@/lib/rpc";
+import { handleRoute } from "@/lib/route";
 
-export async function POST() {
-    try {
-        const state = getAnvilState();
-        await stopAnvil(state.config?.port);
-        return NextResponse.json({ success: true });
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+export async function POST(req: Request) {
+    return handleRoute(async () => {
+        const active = resolveFromRequest(req);
+        await stopAnvil(active.projectId ?? undefined, active.port);
+        resetRpcClients();
+        invalidateActiveProjectCache();
+        return { success: true, port: active.port };
+    });
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useDevnetStore } from "@/store/useDevnetStore";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,35 +9,50 @@ import { CallTree } from "./CallTree";
 import { StorageDiff } from "./StorageDiff";
 import { TraceLog } from "./TraceLog";
 import { parseStructLogs, extractStorageDiffs } from "@/lib/traceParser";
+import { api } from "@/lib/apiClient";
+
+type CallTraceNode = Parameters<typeof CallTree>[0]["node"];
+
+interface TraceResponse {
+    structLogs: unknown[];
+    callTrace: CallTraceNode | null;
+    traceError: string | null;
+}
 
 interface Props {
     hash: string;
-    tx: Record<string, unknown>;
-    receipt: Record<string, unknown> | null;
+    tx: { to?: string | null; input?: string | null } | null;
 }
 
-export function TxDebugger({ hash, tx, receipt }: Props) {
+export function TxDebugger({ hash, tx }: Props) {
     const { setTraceSteps, setCallTree } = useDevnetStore();
     const [loading, setLoading] = useState(true);
     const [structLogs, setStructLogs] = useState<ReturnType<typeof parseStructLogs>>([]);
-    const [callTrace, setCallTrace] = useState<Parameters<typeof CallTree>[0]["node"] | null>(null);
+    const [callTrace, setCallTrace] = useState<CallTraceNode | null>(null);
     const [traceError, setTraceError] = useState<string | null>(null);
 
     useEffect(() => {
-        fetch(`/api/tx/${hash}/trace`)
-            .then((r) => r.json())
-            .then((data) => {
+        let cancelled = false;
+        void (async () => {
+            try {
+                const data = await api.get<TraceResponse>(`/api/tx/${hash}/trace`);
+                if (cancelled) return;
                 const steps = parseStructLogs(data.structLogs ?? []);
                 setStructLogs(steps);
                 setTraceSteps(steps);
                 setCallTrace(data.callTrace ?? null);
                 setCallTree(data.callTrace ?? null);
                 setTraceError(data.traceError ?? null);
-            })
-            .finally(() => setLoading(false));
+            } catch (err) {
+                if (!cancelled) setTraceError(err instanceof Error ? err.message : "Failed to load trace");
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
     }, [hash, setTraceSteps, setCallTree]);
 
-    const storageDiffs = extractStorageDiffs(structLogs);
+    const storageDiffs = useMemo(() => extractStorageDiffs(structLogs), [structLogs]);
 
     if (loading) {
         return (
@@ -72,7 +87,7 @@ export function TxDebugger({ hash, tx, receipt }: Props) {
                     steps={structLogs}
                     callTrace={callTrace}
                     traceError={traceError}
-                    txTo={(tx?.to as string) ?? undefined}
+                    txTo={tx?.to ?? undefined}
                 />
             </TabsContent>
 
@@ -99,8 +114,8 @@ export function TxDebugger({ hash, tx, receipt }: Props) {
             <TabsContent value="raw">
                 <Card className="bg-muted/20 border-border">
                     <CardContent className="pt-4">
-                        <pre className="text-xs font-mono text-green-300 break-all whitespace-pre-wrap">
-                            {(tx?.input as string) ?? "0x"}
+                        <pre className="text-xs font-mono text-emerald-300 break-all whitespace-pre-wrap">
+                            {tx?.input ?? "0x"}
                         </pre>
                     </CardContent>
                 </Card>

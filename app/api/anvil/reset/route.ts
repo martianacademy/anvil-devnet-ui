@@ -1,61 +1,60 @@
-import { NextResponse } from "next/server";
-import { getAnvilState, stopAnvil } from "@/lib/anvilProcess";
-import { getDB } from "@/lib/db";
 import fs from "fs";
+import { getAnvilState, isAnvilRunning, stopAnvil, stateFilePath, logPathFor, LEGACY_KEY } from "@/lib/anvilProcess";
+import { getDB, scopeId } from "@/lib/db";
+import { resolveFromRequest, invalidateActiveProjectCache } from "@/lib/activeProject";
+import { resetRpcClients } from "@/lib/rpc";
+import { assertInt } from "@/lib/validate";
+import { handleRoute } from "@/lib/route";
 
+/**
+ * Wipes indexed data + persisted EVM state for the active chain/project.
+ * Stops the node first so anvil's `--dump-state` can't rewrite the file we delete.
+ */
 export async function POST(req: Request) {
-    try {
-        let chainId: number | undefined;
-        let forkUrl: string | undefined;
+    return handleRoute(async () => {
+        const body = await req.json().catch(() => ({}) as Record<string, unknown>);
+        const active = resolveFromRequest(req);
+        const projectId = active.projectId;
+        const chainId = body.chainId
+            ? assertInt(body.chainId, "chainId", 1, Number.MAX_SAFE_INTEGER)
+            : active.chainId;
 
-        try {
-            const body = await req.json();
-            chainId = body.chainId;
-            forkUrl = body.forkUrl;
-        } catch {
-            // No body — fall back to running config
+        if (isAnvilRunning(projectId ?? undefined)) {
+            await stopAnvil(projectId ?? undefined, active.port);
         }
 
-        const state = getAnvilState();
-        if (!chainId && state.config) {
-            chainId = state.config.chainId;
-            forkUrl = state.config.forkUrl;
-        }
-
-        // Stop Anvil if running
-        if (state.proc && !state.proc.killed) {
-            await stopAnvil(state.config?.port);
-        }
-
-        if (!chainId) {
-            return NextResponse.json({ success: true, message: "No chain to reset" });
-        }
-
-        // Clear DB tables for this chain
         const db = getDB();
-        db.prepare("DELETE FROM blocks WHERE chain_id = ?").run(chainId);
-        db.prepare("DELETE FROM transactions WHERE chain_id = ?").run(chainId);
-        db.prepare("DELETE FROM patch_history").run();
+        const deletedRows = db.transaction(() => {
+            const scope = scopeId(projectId);
+            const blocks = db.prepare("DELETE FROM blocks WHERE chain_id = ? AND project_id = ?").run(chainId, scope);
+            const txs = db.prepare("DELETE FROM transactions WHERE chain_id = ? AND project_id = ?").run(chainId, scope);
+            db.prepare("DELETE FROM patch_history WHERE project_id = ?").run(scope);
+            db.prepare("DELETE FROM snapshots WHERE project_id = ?").run(scope);
+            return { blocks: blocks.changes, transactions: txs.changes };
+        })();
 
-        // Delete state files (both fork and non-fork)
+        // Remove persisted EVM state (fork + non-fork variants) and truncate the log.
+        const key = projectId ?? LEGACY_KEY;
         const deleted: string[] = [];
-        for (const suffix of ["", "-fork"]) {
-            const file = `/tmp/anvil-state-${chainId}${suffix}.json`;
+        for (const fork of [false, true]) {
+            const file = stateFilePath(key, chainId, fork);
             if (fs.existsSync(file)) {
                 fs.unlinkSync(file);
                 deleted.push(file);
             }
         }
-
-        // Clear log
-        const logFile = "/tmp/anvil-devnet.log";
-        if (fs.existsSync(logFile)) {
-            fs.writeFileSync(logFile, "");
+        const custom = getAnvilState(projectId ?? undefined).stateFile;
+        if (custom && !deleted.includes(custom) && fs.existsSync(custom)) {
+            fs.unlinkSync(custom);
+            deleted.push(custom);
         }
 
-        return NextResponse.json({ success: true, deleted, chainId });
-    } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        return NextResponse.json({ error: msg }, { status: 500 });
-    }
+        const logFile = logPathFor(key);
+        if (fs.existsSync(logFile)) fs.writeFileSync(logFile, "");
+
+        resetRpcClients();
+        invalidateActiveProjectCache();
+
+        return { success: true, chainId, projectId, deleted, deletedRows };
+    });
 }

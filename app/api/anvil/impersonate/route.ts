@@ -1,20 +1,22 @@
-import { NextResponse } from "next/server";
 import { rpc } from "@/lib/rpc";
+import { resolveFromRequest } from "@/lib/activeProject";
+import { ValidationError, assertAddress } from "@/lib/validate";
+import { handleRoute } from "@/lib/route";
 
 export async function POST(req: Request) {
-    try {
+    return handleRoute(async () => {
         const { action, address } = await req.json();
+        const target = assertAddress(address);
+        const { port } = resolveFromRequest(req);
 
         if (action === "start") {
-            await rpc("anvil_impersonateAccount", [address]);
-            return NextResponse.json({ success: true, impersonating: address });
-        } else if (action === "stop") {
-            await rpc("anvil_stopImpersonatingAccount", [address]);
-            return NextResponse.json({ success: true });
-        } else {
-            return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+            await rpc("anvil_impersonateAccount", [target], port);
+            return { success: true, impersonating: target };
         }
-    } catch (err: unknown) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
-    }
+        if (action === "stop") {
+            await rpc("anvil_stopImpersonatingAccount", [target], port);
+            return { success: true, impersonating: null };
+        }
+        throw new ValidationError(`Unknown action: ${action}`);
+    });
 }

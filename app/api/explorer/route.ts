@@ -1,144 +1,133 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { getDB } from "@/lib/db";
-import { getAnvilState } from "@/lib/anvilProcess";
+import { getDB, scopeId } from "@/lib/db";
+import { resolveFromRequest } from "@/lib/activeProject";
+import { rpc, rpcBatch } from "@/lib/rpc";
+import { clampInt } from "@/lib/validate";
 
 export const dynamic = "force-dynamic";
 
 interface ContractRow { abi: string; name?: string; source?: string }
 interface BlockRow { number: number }
 
-const ok = (result: unknown) =>
-    NextResponse.json({ status: "1", message: "OK", result });
-const err = (msg: string) =>
+const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
+    NextResponse.json({ status: "1", message: "OK", result, ...extra });
+const fail = (msg: string) =>
     NextResponse.json({ status: "0", message: "NOTOK", result: msg });
 
-/** Current active chainId — used to scope all DB queries */
-function getChainId() {
-    return getAnvilState().config?.chainId ?? 31337;
+const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+function padAddress(address: string): string {
+    return `0x${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
 }
 
-async function rpcCall(method: string, params: unknown[] = []) {
-    const port = getAnvilState().config?.port ?? 8545;
-    const res = await fetch(`http://127.0.0.1:${port}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", method, params, id: Date.now() }),
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    return data.result;
-}
-
+/**
+ * BscScan/Etherscan-compatible read API over the indexed SQLite data and the live node.
+ * Scoped to the active project + chain so multiple devnets never bleed into each other.
+ */
 export async function GET(req: NextRequest) {
     const p = req.nextUrl.searchParams;
-    const module = p.get("module");
+    const mod = p.get("module");
     const action = p.get("action");
     const db = getDB();
+    const active = resolveFromRequest(req);
+    const { chainId, port } = active;
+    const project = scopeId(active.projectId);
 
     try {
-        const chainId = getChainId();
-
         // ── module=account ──────────────────────────────────────────────────────
-        if (module === "account") {
+        if (mod === "account") {
             if (action === "balance") {
                 const address = p.get("address") ?? "";
-                const bal = await rpcCall("eth_getBalance", [address, "latest"]);
-                return ok(BigInt(bal).toString());
+                return ok(BigInt(await rpc<string>("eth_getBalance", [address, "latest"], port)).toString());
             }
 
             if (action === "balancemulti") {
-                const addresses = (p.get("address") ?? "").split(",").slice(0, 20);
-                const results = await Promise.all(
-                    addresses.map(async (a) => {
-                        const bal = await rpcCall("eth_getBalance", [a.trim(), "latest"]);
-                        return { account: a.trim(), balance: BigInt(bal).toString() };
-                    })
+                const addresses = (p.get("address") ?? "").split(",").map((a) => a.trim()).filter(Boolean).slice(0, 20);
+                const results = await rpcBatch<string>(
+                    addresses.map((a) => ({ method: "eth_getBalance", params: [a, "latest"] })),
+                    port
                 );
-                return ok(results);
+                return ok(addresses.map((account, i) => ({
+                    account,
+                    balance: results[i] ? BigInt(results[i]).toString() : "0",
+                })));
             }
 
             if (action === "txlist") {
                 const address = (p.get("address") ?? "").toLowerCase();
-                const start = parseInt(p.get("startblock") ?? "0");
-                const end = parseInt(p.get("endblock") ?? "999999999");
+                const start = clampInt(p.get("startblock"), 0, 0, Number.MAX_SAFE_INTEGER);
+                const end = clampInt(p.get("endblock"), 999_999_999, 0, Number.MAX_SAFE_INTEGER);
                 const sort = p.get("sort") === "desc" ? "DESC" : "ASC";
-                const page = parseInt(p.get("page") ?? "1");
-                const offset = parseInt(p.get("offset") ?? "10000");
-                const limit = Math.min(offset, 10000);
-                const skip = (page - 1) * limit;
+                const page = clampInt(p.get("page"), 1, 1, 100_000);
+                const limit = clampInt(p.get("offset"), 1000, 1, 10_000);
                 const rows = db.prepare(`
           SELECT * FROM transactions
           WHERE (lower(from_address) = ? OR lower(to_address) = ?)
-            AND chain_id = ?
+            AND chain_id = ? AND project_id = ?
             AND block_number BETWEEN ? AND ?
           ORDER BY block_number ${sort}
           LIMIT ? OFFSET ?
-        `).all(address, address, chainId, start, end, limit, skip);
+        `).all(address, address, chainId, project, start, end, limit, (page - 1) * limit);
                 return ok(rows);
             }
 
             if (action === "txlistinternal") {
-                // Returns internal txs from call trace
                 const address = (p.get("address") ?? "").toLowerCase();
-                return ok([]); // TODO: parse from tx_traces
+                return ok(internalTransfersFor(address, chainId, project));
             }
 
             if (action === "tokentx") {
                 const address = (p.get("address") ?? "").toLowerCase();
                 const contract = p.get("contractaddress") ?? "";
-                const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
-                const filter: Record<string, unknown> = {
-                    topics: [TRANSFER_TOPIC, null, `0x000000000000000000000000${address.slice(2)}`],
-                    fromBlock: "0x0",
-                    toBlock: "latest",
-                };
-                if (contract) filter.address = contract;
-                const logs = await rpcCall("eth_getLogs", [filter]);
-                return ok(logs);
+                const padded = address ? padAddress(address) : null;
+                const base = { fromBlock: "0x0", toBlock: "latest", ...(contract ? { address: contract } : {}) };
+
+                // A transfer touching the address is either the `from` or the `to` topic.
+                const [sent, received] = await Promise.all([
+                    rpc<unknown[]>("eth_getLogs", [{ ...base, topics: [TRANSFER_TOPIC, padded, null] }], port),
+                    rpc<unknown[]>("eth_getLogs", [{ ...base, topics: [TRANSFER_TOPIC, null, padded] }], port),
+                ]);
+                return ok([...(sent ?? []), ...(received ?? [])]);
             }
 
             if (action === "tokenbalance") {
                 const token = p.get("contractaddress") ?? "";
                 const wallet = p.get("address") ?? "";
-                const selector = "0x70a08231";
-                const paddedAddr = wallet.toLowerCase().replace("0x", "").padStart(64, "0");
-                const callData = selector + paddedAddr;
-                const result = await rpcCall("eth_call", [{ to: token, data: callData }, "latest"]);
-                return ok(BigInt(result).toString());
+                const data = `0x70a08231${wallet.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
+                const result = await rpc<string>("eth_call", [{ to: token, data }, "latest"], port);
+                return ok(result && result !== "0x" ? BigInt(result).toString() : "0");
             }
 
             if (action === "listaccounts") {
-                const rawAccounts: string[] = await rpcCall("eth_accounts", []);
-                const accounts = await Promise.all(
-                    rawAccounts.map(async (address) => {
-                        const [balHex, nonceHex] = await Promise.all([
-                            rpcCall("eth_getBalance", [address, "latest"]),
-                            rpcCall("eth_getTransactionCount", [address, "latest"]),
-                        ]);
-                        return {
-                            address,
-                            balance: BigInt(balHex).toString(),
-                            nonce: parseInt(nonceHex, 16),
-                        };
-                    })
-                );
-                return ok(accounts);
+                const addresses = await rpc<string[]>("eth_accounts", [], port);
+                const calls = addresses.flatMap((address) => [
+                    { method: "eth_getBalance", params: [address, "latest"] },
+                    { method: "eth_getTransactionCount", params: [address, "latest"] },
+                ]);
+                const results = await rpcBatch<string>(calls, port);
+                return ok(addresses.map((address, i) => ({
+                    address,
+                    balance: results[i * 2] ? BigInt(results[i * 2] as string).toString() : "0",
+                    nonce: results[i * 2 + 1] ? parseInt(results[i * 2 + 1] as string, 16) : 0,
+                })));
             }
         }
 
-        // ── module=contract ──────────────────────────────────────────────────────
-        if (module === "contract") {
+        // ── module=contract ─────────────────────────────────────────────────────
+        if (mod === "contract") {
+            const address = (p.get("address") ?? "").toLowerCase();
+
             if (action === "getabi") {
-                const address = (p.get("address") ?? "").toLowerCase();
                 const row = db.prepare("SELECT abi FROM contracts WHERE lower(address)=?").get(address) as ContractRow | undefined;
-                if (!row) return err("Contract source code not verified.");
+                if (!row) return fail("Contract source code not verified.");
                 return ok(row.abi);
             }
 
             if (action === "getsourcecode") {
-                const address = (p.get("address") ?? "").toLowerCase();
                 const row = db.prepare("SELECT * FROM contracts WHERE lower(address)=?").get(address) as ContractRow | undefined;
-                if (!row) return ok([{ SourceCode: "", ABI: "Contract source code not verified.", ContractName: "", CompilerVersion: "", OptimizationUsed: "0" }]);
+                if (!row) {
+                    return ok([{ SourceCode: "", ABI: "Contract source code not verified.", ContractName: "", CompilerVersion: "", OptimizationUsed: "0" }]);
+                }
                 return ok([{
                     SourceCode: row.source ?? "",
                     ABI: row.abi,
@@ -149,76 +138,138 @@ export async function GET(req: NextRequest) {
             }
         }
 
-        // ── module=transaction ────────────────────────────────────────────────────
-        if (module === "transaction") {
+        // ── module=transaction ──────────────────────────────────────────────────
+        if (mod === "transaction") {
             const hash = p.get("txhash") ?? "";
-            const receipt = await rpcCall("eth_getTransactionReceipt", [hash]);
-            if (!receipt) return err("Transaction not found");
+            const receipt = await rpc<{ status?: string } | null>("eth_getTransactionReceipt", [hash], port);
+            if (!receipt) return fail("Transaction not found");
             const success = parseInt(receipt.status ?? "0x1", 16) === 1;
             if (action === "gettxreceiptstatus") return ok({ status: success ? "1" : "0" });
             if (action === "getstatus") return ok({ isError: success ? "0" : "1", errDescription: "" });
         }
 
-        // ── module=block ──────────────────────────────────────────────────────────
-        // ── module=tx ──────────────────────────────────────────────────────────
-        if (module === "tx" && action === "getrecentlist") {
-            const limit = Math.min(parseInt(p.get("limit") ?? "100"), 500);
-            const rows = db.prepare(
-                "SELECT * FROM transactions WHERE chain_id = ? ORDER BY block_number DESC, nonce DESC LIMIT ?"
-            ).all(chainId, limit);
-            return ok(rows);
+        // ── module=tx ───────────────────────────────────────────────────────────
+        if (mod === "tx" && action === "getrecentlist") {
+            const limit = clampInt(p.get("limit"), 100, 1, 1000);
+            const offset = clampInt(p.get("offset"), 0, 0, 1_000_000);
+            const rows = db.prepare(`
+                SELECT * FROM transactions
+                 WHERE chain_id = ? AND project_id = ?
+                 ORDER BY block_number DESC, nonce DESC
+                 LIMIT ? OFFSET ?
+            `).all(chainId, project, limit, offset);
+            const total = (db.prepare("SELECT COUNT(*) AS n FROM transactions WHERE chain_id = ? AND project_id = ?")
+                .get(chainId, project) as { n: number }).n;
+            return ok(rows, { total });
         }
 
-        if (module === "block" && action === "getblocklist") {
-            const page = parseInt(p.get("page") ?? "1");
-            const offset = parseInt(p.get("offset") ?? "10");
-            const limit = Math.min(offset, 100);
-            const skip = (page - 1) * limit;
-            const rows = db.prepare(
-                "SELECT number, hash, timestamp, tx_count AS txCount, gas_used AS gasUsed FROM blocks WHERE chain_id = ? ORDER BY number DESC LIMIT ? OFFSET ?"
-            ).all(chainId, limit, skip);
-            return ok(rows);
+        // ── module=block ────────────────────────────────────────────────────────
+        if (mod === "block" && action === "getblocklist") {
+            const page = clampInt(p.get("page"), 1, 1, 100_000);
+            const limit = clampInt(p.get("offset"), 10, 1, 200);
+            const rows = db.prepare(`
+                SELECT number, hash, timestamp, tx_count AS txCount, gas_used AS gasUsed, gas_limit AS gasLimit
+                  FROM blocks
+                 WHERE chain_id = ? AND project_id = ?
+                 ORDER BY number DESC
+                 LIMIT ? OFFSET ?
+            `).all(chainId, project, limit, (page - 1) * limit);
+            const total = (db.prepare("SELECT COUNT(*) AS n FROM blocks WHERE chain_id = ? AND project_id = ?")
+                .get(chainId, project) as { n: number }).n;
+            return ok(rows, { total });
         }
 
-        if (module === "block" && action === "getblocknobytime") {
-            const ts = parseInt(p.get("timestamp") ?? "0");
-            const closest = p.get("closest") ?? "before";
-            const op = closest === "before" ? "<=" : ">=";
-            const row = db.prepare(`SELECT number FROM blocks WHERE chain_id = ? AND timestamp ${op} ? ORDER BY timestamp DESC LIMIT 1`).get(chainId, ts) as BlockRow | undefined;
-            return row ? ok(row.number.toString()) : err("No block found");
+        if (mod === "block" && action === "getblocknobytime") {
+            const ts = clampInt(p.get("timestamp"), 0, 0, Number.MAX_SAFE_INTEGER);
+            const before = (p.get("closest") ?? "before") === "before";
+            const row = db.prepare(`
+                SELECT number FROM blocks
+                 WHERE chain_id = ? AND project_id = ? AND timestamp ${before ? "<=" : ">="} ?
+                 ORDER BY timestamp ${before ? "DESC" : "ASC"}
+                 LIMIT 1
+            `).get(chainId, project, ts) as BlockRow | undefined;
+            return row ? ok(row.number.toString()) : fail("No block found");
         }
 
-        // ── module=logs ───────────────────────────────────────────────────────────
-        if (module === "logs" && action === "getLogs") {
-            const address = p.get("address");
-            const topic0 = p.get("topic0");
-            const topic1 = p.get("topic1");
-            const fromBlock = p.get("fromBlock") ?? "0x0";
-            const toBlock = p.get("toBlock") ?? "latest";
+        // ── module=logs ─────────────────────────────────────────────────────────
+        if (mod === "logs" && action === "getLogs") {
             const filter: Record<string, unknown> = {
-                fromBlock,
-                toBlock,
-                topics: [topic0 ?? null, topic1 ?? null],
+                fromBlock: p.get("fromBlock") ?? "0x0",
+                toBlock: p.get("toBlock") ?? "latest",
+                topics: [p.get("topic0"), p.get("topic1"), p.get("topic2")].map((t) => t ?? null),
             };
+            const address = p.get("address");
             if (address) filter.address = address;
-            const logs = await rpcCall("eth_getLogs", [filter]);
-            return ok(logs);
+            return ok(await rpc("eth_getLogs", [filter], port));
         }
 
-        // ── module=proxy ──────────────────────────────────────────────────────────
-        if (module === "proxy") {
-            const method = action as string;
+        // ── module=proxy ────────────────────────────────────────────────────────
+        if (mod === "proxy" && action) {
             const params: unknown[] = [];
             if (p.has("txhash")) params.push(p.get("txhash"));
             if (p.has("address")) params.push(p.get("address"));
             if (p.has("tag")) params.push(p.get("tag"));
             if (p.has("boolean")) params.push(p.get("boolean") === "true");
-            const result = await rpcCall(method, params);
-            return ok(result);
+            return ok(await rpc(action, params, port));
         }
     } catch (e: unknown) {
-        return err(e instanceof Error ? e.message : "Unknown error");
+        return fail(e instanceof Error ? e.message : "Unknown error");
     }
 
-    return err(`Unknown module/action: ${module}/${action}`);
+    return fail(`Unknown module/action: ${mod}/${action}`);
+}
+
+interface CallNodeLike {
+    type?: string;
+    from?: string;
+    to?: string;
+    value?: string;
+    gasUsed?: string;
+    calls?: CallNodeLike[];
+}
+
+/** Derive Etherscan-style "internal transactions" from cached callTracer output. */
+function internalTransfersFor(address: string, chainId: number, project: string) {
+    if (!address) return [];
+    const db = getDB();
+    const rows = db.prepare(`
+        SELECT t.hash, t.block_number, t.block_timestamp, tr.call_trace
+          FROM tx_traces tr
+          JOIN transactions t ON lower(t.hash) = lower(tr.hash)
+         WHERE t.chain_id = ? AND t.project_id = ?
+         ORDER BY t.block_number DESC
+         LIMIT 500
+    `).all(chainId, project) as { hash: string; block_number: number; block_timestamp: number; call_trace: string }[];
+
+    const out: Record<string, unknown>[] = [];
+    for (const row of rows) {
+        let root: CallNodeLike | null;
+        try {
+            root = JSON.parse(row.call_trace);
+        } catch {
+            continue;
+        }
+        if (!root) continue;
+
+        const walk = (node: CallNodeLike, depth: number) => {
+            const from = node.from?.toLowerCase();
+            const to = node.to?.toLowerCase();
+            if (depth > 0 && (from === address || to === address)) {
+                out.push({
+                    hash: row.hash,
+                    blockNumber: row.block_number,
+                    timeStamp: row.block_timestamp,
+                    from: node.from ?? null,
+                    to: node.to ?? null,
+                    value: node.value ? BigInt(node.value).toString() : "0",
+                    gasUsed: node.gasUsed ?? null,
+                    type: node.type ?? "CALL",
+                    traceId: `${depth}`,
+                });
+            }
+            for (const child of node.calls ?? []) walk(child, depth + 1);
+        };
+        walk(root, 0);
+    }
+    return out;
 }

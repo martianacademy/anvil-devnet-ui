@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useDevnetStore } from "@/store/useDevnetStore";
+import { useProjectStore } from "@/store/useProjectStore";
 import { HeroSection, StatsBar, LatestBlocks, LatestTransactions } from "@/components/Dashboard";
+import { explorer } from "@/lib/apiClient";
+import { useAsyncData } from "@/lib/hooks";
+import { formatGwei } from "@/lib/format";
 
 interface BlockRow {
   number: number;
@@ -12,70 +15,29 @@ interface BlockRow {
   gasUsed: string;
 }
 
-export default function DashboardPage() {
-  const {
-    nodeStatus, latestBlock, chainId, port, transactions,
-    setNodeStatus, setLatestBlock, setChainId, setPort, setNodeConfig,
-  } = useDevnetStore();
+const BLOCKS_SHOWN = 6;
 
-  const [gasPrice, setGasPrice] = useState<string>("—");
-  const [blocks, setBlocks] = useState<BlockRow[]>([]);
-  const [lanIp, setLanIp] = useState<string | null>(null);
+export default function DashboardPage() {
+  const { nodeStatus, latestBlock, chainId, port, transactions, gasPrice, lanIp } = useDevnetStore();
+  const activeProjectId = useProjectStore((s) => s.activeProjectId);
 
   const localRpcUrl = `http://127.0.0.1:${port}`;
   const lanRpcUrl = lanIp ? `http://${lanIp}:${port}` : null;
 
-  // Fetch LAN IP on mount
-  useEffect(() => {
-    fetch("/api/anvil/status")
-      .then((r) => r.json())
-      .then((data) => { if (data.lanIp) setLanIp(data.lanIp); })
-      .catch(() => {});
-  }, []);
-
-  // Poll node status + gas price
-  useEffect(() => {
-    const poll = async () => {
-      try {
-        const s = await fetch("/api/anvil/status").then((r) => r.json());
-        if (s.running) {
-          setNodeStatus("running");
-          setLatestBlock(s.blockNumber ?? 0);
-          if (s.chainId) setChainId(s.chainId);
-          if (s.port) setPort(s.port);
-          if (s.config) setNodeConfig(s.config);
-        } else {
-          if (useDevnetStore.getState().nodeStatus !== "starting") {
-            setNodeStatus("stopped");
-          }
-        }
-        const gp = await fetch("/api/rpc", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", method: "eth_gasPrice", params: [], id: 1 }),
-        }).then((r) => r.json());
-        if (gp.result) {
-          const gwei = Number(BigInt(gp.result)) / 1e9;
-          setGasPrice(`${gwei.toFixed(2)} Gwei`);
-        }
-      } catch { /* ignore */ }
-    };
-    poll();
-    const id = setInterval(poll, 4000);
-    return () => clearInterval(id);
-  }, []);
-
-  // Clear blocks on chain switch
-  useEffect(() => { setBlocks([]); }, [chainId]);
-
-  // Fetch recent blocks
-  useEffect(() => {
-    if (nodeStatus !== "running") return;
-    fetch("/api/explorer?module=block&action=getblocklist&page=1&offset=6")
-      .then((r) => r.json())
-      .then((d) => Array.isArray(d.result) && setBlocks(d.result))
-      .catch(() => {});
-  }, [latestBlock, nodeStatus, chainId]);
+  // Node status is polled by the navbar; this only refreshes the two feed cards,
+  // re-running whenever the tip advances or the target chain/project changes.
+  const { data, loading } = useAsyncData(
+    async () => {
+      if (nodeStatus !== "running") return { blocks: [] as BlockRow[], txTotal: null as number | null };
+      const [blockList, txList] = await Promise.all([
+        explorer<BlockRow[]>(`module=block&action=getblocklist&page=1&offset=${BLOCKS_SHOWN}`, []),
+        explorer<unknown[]>("module=tx&action=getrecentlist&limit=1", []),
+      ]);
+      return { blocks: blockList.result, txTotal: txList.total };
+    },
+    [nodeStatus, chainId, latestBlock, activeProjectId],
+    { blocks: [] as BlockRow[], txTotal: null as number | null }
+  );
 
   return (
     <div className="min-h-screen bg-background">
@@ -88,14 +50,19 @@ export default function DashboardPage() {
       />
       <StatsBar
         latestBlock={latestBlock}
-        txCount={transactions.length}
-        gasPrice={gasPrice}
+        txCount={data.txTotal ?? transactions.length}
+        gasPrice={gasPrice ? formatGwei(gasPrice) : "—"}
         nodeStatus={nodeStatus}
       />
       <div className="max-w-5xl mx-auto px-4 py-6 grid grid-cols-1 md:grid-cols-2 gap-5">
-        <LatestBlocks blocks={blocks} nodeStatus={nodeStatus} />
-        <LatestTransactions transactions={transactions} nodeStatus={nodeStatus} />
+        <LatestBlocks blocks={data.blocks} nodeStatus={nodeStatus} loading={loading} />
+        <LatestTransactions transactions={transactions} nodeStatus={nodeStatus} loading={loading} />
       </div>
+      {activeProjectId && (
+        <p className="max-w-5xl mx-auto px-4 pb-6 text-[11px] font-mono text-muted-foreground">
+          Scoped to project <span className="text-primary">{activeProjectId}</span>
+        </p>
+      )}
     </div>
   );
 }

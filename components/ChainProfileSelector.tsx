@@ -1,54 +1,70 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/components/ui/toast";
+import { api } from "@/lib/apiClient";
+import { useAsyncData } from "@/lib/hooks";
+import { useDevnetStore } from "@/store/useDevnetStore";
 
-interface Profile {
+export interface ChainProfile {
     id: number;
     name: string;
     chainId: number;
     forkUrl?: string;
+    forkBlockNumber?: number;
+    blockTime: number;
+    baseFee: number;
+    port: number;
+    accounts: number;
+    balance: number;
     is_active: number;
 }
 
+interface ProfilesResponse {
+    profiles: ChainProfile[];
+    presets: Omit<ChainProfile, "id" | "is_active">[];
+}
+
 export function ChainProfileSelector() {
-    const [profiles, setProfiles] = useState<Profile[]>([]);
-    const [selected, setSelected] = useState("");
-    const [status, setStatus] = useState("");
+    const { toast } = useToast();
+    const setNodeConfig = useDevnetStore((s) => s.setNodeConfig);
 
-    const load = async () => {
-        const data = await fetch("/api/patches/profiles").then((r) => r.json());
-        setProfiles(data.profiles ?? []);
+    const { data, loading, reload } = useAsyncData(
+        () => api.get<ProfilesResponse>("/api/patches/profiles"),
+        [],
+        { profiles: [] as ChainProfile[], presets: [] as ProfilesResponse["presets"] }
+    );
+
+    /** Mark the profile active and push its settings into the Anvil start form. */
+    const activate = async (profile: ChainProfile) => {
+        try {
+            await api.patch("/api/patches/profiles", { name: profile.name });
+            setNodeConfig({
+                chainId: profile.chainId,
+                port: profile.port,
+                blockTime: profile.blockTime,
+                baseFee: profile.baseFee,
+                accounts: profile.accounts,
+                balance: profile.balance,
+                forkUrl: profile.forkUrl,
+                forkBlockNumber: profile.forkBlockNumber,
+            });
+            toast(`Profile "${profile.name}" loaded into the start form`, "success");
+            reload();
+        } catch (err) {
+            toast(err instanceof Error ? err.message : "Could not activate profile", "error");
+        }
     };
 
-    useEffect(() => { load(); }, []);
-
-    const activate = async (name: string) => {
+    const savePreset = async (preset: ProfilesResponse["presets"][number]) => {
         try {
-            await fetch("/api/patches/profiles", {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name }),
-            });
-            setStatus(`✓ Profile "${name}" activated`);
-            load();
-        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
-    };
-
-    const loadPreset = async (presetName: string) => {
-        try {
-            const data = await fetch("/api/patches/profiles").then((r) => r.json());
-            const preset = data.presets?.find((p: { name: string }) => p.name === presetName);
-            if (!preset) return;
-            await fetch("/api/patches/profiles", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(preset),
-            });
-            setStatus(`✓ Preset "${presetName}" saved`);
-            load();
-        } catch (e: unknown) { setStatus(`Error: ${e instanceof Error ? e.message : "Unknown error"}`); }
+            await api.post("/api/patches/profiles", preset);
+            toast(`Preset "${preset.name}" saved`, "success");
+            reload();
+        } catch (err) {
+            toast(err instanceof Error ? err.message : "Could not save preset", "error");
+        }
     };
 
     return (
@@ -59,48 +75,46 @@ export function ChainProfileSelector() {
             <div className="p-4 space-y-4">
                 <div className="flex flex-col gap-2">
                     <p className="text-muted-foreground text-xs">Quick presets</p>
-                    {["BSC Mainnet Fork", "opBNB Fork", "ETH Mainnet Fork", "Local Clean"].map((name) => (
+                    {data.presets.map((preset) => (
                         <Button
-                            key={name}
+                            key={preset.name}
                             size="sm"
                             variant="outline"
                             className="w-full justify-start text-xs h-8"
-                            onClick={() => loadPreset(name)}
+                            onClick={() => savePreset(preset)}
+                            disabled={loading}
                         >
-                            {name}
+                            {preset.name}
                         </Button>
                     ))}
                 </div>
 
-                {profiles.length > 0 && (
+                {data.profiles.length > 0 && (
                     <div className="space-y-1">
                         <p className="text-muted-foreground text-xs">Saved profiles</p>
-                        {profiles.map((p) => (
+                        {data.profiles.map((p) => (
                             <div key={p.id} className="flex items-center gap-2 py-1.5 border-b border-border/30 last:border-0">
                                 {p.is_active ? (
-                                    <Badge className="bg-green-500/20 text-green-400 border border-green-500/30 text-[10px] px-1.5">active</Badge>
+                                    <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] px-1.5">
+                                        active
+                                    </Badge>
                                 ) : (
                                     <button
                                         className="text-[10px] text-primary border border-primary/30 rounded px-1.5 py-0.5 hover:bg-primary/10 transition-colors"
-                                        onClick={() => activate(p.name)}
+                                        onClick={() => activate(p)}
                                     >
                                         Use
                                     </button>
                                 )}
                                 <div className="flex-1 min-w-0">
                                     <p className="text-xs text-foreground truncate">{p.name}</p>
-                                    <p className="text-[10px] text-muted-foreground">Chain {p.chainId}</p>
+                                    <p className="text-[10px] text-muted-foreground">
+                                        Chain {p.chainId}{p.forkUrl ? " · fork" : ""}
+                                    </p>
                                 </div>
                             </div>
                         ))}
                     </div>
-                )}
-
-                {status && (
-                    <div className={`rounded-lg px-3 py-2 text-xs font-mono border ${status.startsWith("Error")
-                        ? "bg-red-500/10 border-red-500/30 text-red-400"
-                        : "bg-green-500/10 border-green-500/30 text-green-400"
-                        }`}>{status}</div>
                 )}
             </div>
         </div>
