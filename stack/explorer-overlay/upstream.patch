@@ -1,0 +1,212 @@
+diff --git a/src/services/mixpanel/get-page-type.ts b/src/services/mixpanel/get-page-type.ts
+index 5f3c6d7..aa254ec 100644
+--- a/src/services/mixpanel/get-page-type.ts
++++ b/src/services/mixpanel/get-page-type.ts
+@@ -60,6 +60,13 @@ export const PAGE_TYPE_DICT: Record<Route['pathname'], string> = {
+   '/epochs': 'Epochs',
+   '/epochs/[number]': 'Epoch details',
+   '/gas-tracker': 'Gas tracker',
++  '/devnet': 'DevNet control',
++  '/devnet/debugger': 'DevNet transaction debugger',
++  '/devnet/evm': 'DevNet EVM control',
++  '/devnet/patches': 'DevNet state patches',
++  '/devnet/projects': 'DevNet projects',
++  '/devnet/simulate': 'DevNet call simulator',
++  '/api/devnet/[...path]': 'DevNet Control API proxy',
+   '/token-transfers': 'Token transfers',
+   '/advanced-filter': 'Advanced filter',
+   '/pools': 'DEX pools',
+diff --git a/src/shell/metadata/templates/index.ts b/src/shell/metadata/templates/index.ts
+index 52f60a6..e71f34f 100644
+--- a/src/shell/metadata/templates/index.ts
++++ b/src/shell/metadata/templates/index.ts
+@@ -561,6 +561,78 @@ export const TEMPLATE_MAP: Record<Route['pathname'], RouteTemplateRecord> = {
+       },
+     },
+   },
++  // DevNet control plane. The proxy route never renders a page, but the template
++  // map is typed as a Record over every route, so it needs an entry too.
++  '/api/devnet/[...path]': {
++    metadata: {
++      title: {
++        'default': 'DevNet Control API',
++      },
++      description: {
++        'default': 'Proxy to the DevNet Control API.',
++      },
++    },
++  },
++  '/devnet': {
++    metadata: {
++      title: {
++        'default': '%chain_name% DevNet control',
++      },
++      description: {
++        'default': 'Start, stop, fork and reset the local %chain_name% Anvil node.',
++      },
++    },
++  },
++  '/devnet/evm': {
++    metadata: {
++      title: {
++        'default': '%chain_name% EVM control',
++      },
++      description: {
++        'default': 'Mine blocks, travel time, impersonate accounts and snapshot %chain_name% state.',
++      },
++    },
++  },
++  '/devnet/patches': {
++    metadata: {
++      title: {
++        'default': '%chain_name% state patches',
++      },
++      description: {
++        'default': 'Fund native and ERC-20 balances and patch storage slots on %chain_name%.',
++      },
++    },
++  },
++  '/devnet/simulate': {
++    metadata: {
++      title: {
++        'default': '%chain_name% call simulator',
++      },
++      description: {
++        'default': 'Dry-run a call against %chain_name% without changing chain state.',
++      },
++    },
++  },
++  '/devnet/debugger': {
++    metadata: {
++      title: {
++        'default': '%chain_name% transaction debugger',
++      },
++      description: {
++        'default': 'Step through %chain_name% transactions opcode by opcode with stack, memory and storage.',
++      },
++    },
++  },
++  '/devnet/projects': {
++    metadata: {
++      title: {
++        'default': '%chain_name% devnet projects',
++      },
++      description: {
++        'default': 'Run several isolated %chain_name% devnets side by side.',
++      },
++    },
++  },
+   '/gas-tracker': {
+     metadata: {
+       title: {
+diff --git a/src/shell/navigation/useNavItems.tsx b/src/shell/navigation/useNavItems.tsx
+index 117f188..a7875cb 100644
+--- a/src/shell/navigation/useNavItems.tsx
++++ b/src/shell/navigation/useNavItems.tsx
+@@ -359,7 +359,54 @@ export default function useNavItems(): ReturnType {
+       ...config.shell.navigation.otherLinks,
+     ].filter(Boolean);
+ 
++    // DevNet: the Anvil control plane. These pages talk to the DevNet Control API
++    // (proxied through /api/devnet/*), not to the Blockscout backend.
++    const devNetNavItems: Array<NavItem> = [
++      {
++        text: 'Node control',
++        nextRoute: { pathname: '/devnet' as const },
++        icon: 'gear',
++        isActive: pathname === '/devnet',
++      },
++      {
++        text: 'EVM control',
++        nextRoute: { pathname: '/devnet/evm' as const },
++        icon: 'lightning',
++        isActive: pathname === '/devnet/evm',
++      },
++      {
++        text: 'Tx debugger',
++        nextRoute: { pathname: '/devnet/debugger' as const },
++        icon: 'navigation/internal_txns',
++        isActive: pathname === '/devnet/debugger',
++      },
++      {
++        text: 'State patches',
++        nextRoute: { pathname: '/devnet/patches' as const },
++        icon: 'edit',
++        isActive: pathname === '/devnet/patches',
++      },
++      {
++        text: 'Call simulator',
++        nextRoute: { pathname: '/devnet/simulate' as const },
++        icon: 'lightning_navbar',
++        isActive: pathname === '/devnet/simulate',
++      },
++      {
++        text: 'Projects',
++        nextRoute: { pathname: '/devnet/projects' as const },
++        icon: 'navigation/blockchain',
++        isActive: pathname.startsWith('/devnet/projects'),
++      },
++    ];
++
+     const mainNavItems: ReturnType['mainNavItems'] = [
++      {
++        text: 'DevNet',
++        icon: 'gear',
++        isActive: devNetNavItems.some((item) => isInternalItem(item) && item.isActive),
++        subItems: devNetNavItems,
++      },
+       {
+         text: 'Blockchain',
+         icon: 'navigation/blockchain',
+diff --git a/src/slices/tx/pages/details/Transaction.tsx b/src/slices/tx/pages/details/Transaction.tsx
+index 2a14a6d..bb9bf08 100644
+--- a/src/slices/tx/pages/details/Transaction.tsx
++++ b/src/slices/tx/pages/details/Transaction.tsx
+@@ -1,5 +1,6 @@
+ // SPDX-License-Identifier: LicenseRef-Blockscout
+ 
++import { Flex } from '@chakra-ui/react';
+ import { useRouter } from 'next/router';
+ import React from 'react';
+ 
+@@ -18,6 +19,10 @@ import TextAd from 'src/features/ads/text/components/TextAd';
+ import TxDetailsWrapped from 'src/features/chain-variants/suave/pages/tx/TxDetailsWrapped';
+ import { isPublicClientAvailable } from 'src/features/connect-wallet/utils/public-client';
+ import TxBlobs from 'src/features/data-availability/pages/tx/TxBlobs';
++import DevNetDebugButton from 'src/features/devnet/components/DevNetDebugButton';
++import TxEvmTrace from 'src/features/devnet/components/TxEvmTrace';
++import TxGasProfilerTab from 'src/features/devnet/components/TxGasProfilerTab';
++import TxStorageDiffTab from 'src/features/devnet/components/TxStorageDiffTab';
+ import TxFheOperations from 'src/features/fhe-operations/pages/tx/TxFheOperations';
+ import TxAuthorizations from 'src/features/tx-authorization/pages/tx/TxAuthorizations';
+ import TxAssetFlows from 'src/features/tx-interpretation/noves/pages/tx-asset-flows/TxAssetFlows';
+@@ -87,6 +92,10 @@ const TransactionPageContent = () => {
+       { id: 'logs', title: 'Logs', component: <TxLogs txQuery={ txQuery }/> },
+       { id: 'state', title: 'State', component: <TxState txQuery={ txQuery }/> },
+       { id: 'raw_trace', title: 'Raw trace', component: <TxRawTrace txQuery={ txQuery }/> },
++      // Devnet views built from debug_traceTransaction — the indexer has no call data for Anvil.
++      { id: 'evm_trace', title: 'EVM trace', component: <TxEvmTrace hash={ hash } to={ data?.to?.hash }/> },
++      { id: 'gas_profiler', title: 'Gas profiler', component: <TxGasProfilerTab hash={ hash } to={ data?.to?.hash }/> },
++      { id: 'storage_diff', title: 'Storage diff', component: <TxStorageDiffTab hash={ hash } to={ data?.to?.hash }/> },
+       txQuery.data?.fhe_operations_count && txQuery.data.fhe_operations_count > 0 ?
+         { id: 'fhe_operations', title: 'FHE operations', component: <TxFheOperations txQuery={ txQuery }/> } :
+         undefined,
+@@ -120,10 +129,14 @@ const TransactionPageContent = () => {
+   const isTabsLoading = txQuery.isPlaceholderData && !txQuery.errorUpdateCount;
+ 
+   const tags = (
+-    <MetadataTags
+-      isLoading={ isTabsLoading }
+-      tags={ txTags }
+-    />
++    <Flex alignItems="center" gap={ 2 } flexWrap="wrap">
++      <MetadataTags
++        isLoading={ isTabsLoading }
++        tags={ txTags }
++      />
++      { /* Opcode-level debugging lives in the DevNet control plane, not the indexer. */ }
++      <DevNetDebugButton hash={ hash }/>
++    </Flex>
+   );
+ 
+   const titleSecondRow = <TxSubHeading hash={ hash } hasTag={ Boolean(data?.transaction_tag) } txQuery={ txQuery }/>;

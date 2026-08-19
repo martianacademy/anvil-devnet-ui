@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Explorer overlay: belongs to the Blockscout frontend, linted there.
+    "stack/**",
   ]),
 ]);
 

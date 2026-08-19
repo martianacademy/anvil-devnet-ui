@@ -1,0 +1,32 @@
+# Local devnet overrides for the Blockscout Anvil preset.
+#
+# Run with:
+#   docker compose -f anvil.yml -f devnet.override.yml up -d
+#
+# The stock anvil.yml points Blockscout at host.docker.internal:8545. That port is
+# often already taken by a hand-started anvil bound to 127.0.0.1 (which containers
+# cannot reach), so the devnet this explorer indexes lives on ${DEVNET_RPC_PORT}
+# and is started with --host 0.0.0.0 by the DevNet Control API.
+services:
+  backend:
+    environment:
+      ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:${DEVNET_RPC_PORT:-8546}/
+      ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:${DEVNET_RPC_PORT:-8546}/
+      ETHEREUM_JSONRPC_WS_URL: ws://host.docker.internal:${DEVNET_RPC_PORT:-8546}/
+      CHAIN_ID: '${DEVNET_CHAIN_ID:-31337}'
+      # The bundled Postgres has no TLS; without this Ecto attempts SSL, the
+      # server logs "invalid length of startup packet" and the pool never connects.
+      ECTO_USE_SSL: 'false'
+      # A devnet mines constantly and has no reorgs — poll fast, keep the UI live.
+      INDEXER_CATCHUP_BLOCKS_BATCH_SIZE: '10'
+      INDEXER_CATCHUP_BLOCKS_CONCURRENCY: '10'
+
+  frontend:
+    environment:
+      NEXT_PUBLIC_NETWORK_ID: '${DEVNET_CHAIN_ID:-31337}'
+      NEXT_PUBLIC_NETWORK_RPC_URL: http://host.docker.internal:${DEVNET_RPC_PORT:-8546}/
+      NEXT_PUBLIC_NETWORK_NAME: Anvil DevNet
+      NEXT_PUBLIC_NETWORK_SHORT_NAME: DevNet
+      NEXT_PUBLIC_NETWORK_CURRENCY_NAME: Ether
+      NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: ETH
+      NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: '18'
