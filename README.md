@@ -511,6 +511,7 @@ anvil-devnet-ui/
 | `pnpm install` fails building **node-datachannel** | A transitive WebRTC dependency compiles native code. Install with `--ignore-scripts` (what `stack/setup.sh` does); nothing needs it at runtime. |
 | `pnpm dev:local` fails on **`git describe`** | The frontend clone has no tags. `git tag devnet-fork-base` inside it (also done by `stack/setup.sh`). |
 | **“Cannot find module node:sqlite”** | Node is older than 22.5. Upgrade Node — Bun does not implement `node:sqlite`, but `next dev`/`next build` run under Node anyway. |
+| Explorer pages **500**, everything returns `Too Many Requests` | Blockscout's API rate limit — 300 requests per minute per IP by default. The frontend, the stats service and every browser all reach the backend from the same Docker gateway address, so they share one bucket, and a chain mining every two seconds empties it. `API_RATE_LIMIT_DISABLED=true` is set in `devnet.override.yml`; make sure the override is passed. |
 | The trace tab says **tracing unavailable** | The node was started without `--steps-tracing`, or you are on a fork whose RPC blocks `debug_traceTransaction`. |
 
 ---

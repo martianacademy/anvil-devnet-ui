@@ -24,6 +24,12 @@ services:
       # A devnet mines constantly and has no reorgs — poll fast, keep the UI live.
       INDEXER_CATCHUP_BLOCKS_BATCH_SIZE: '10'
       INDEXER_CATCHUP_BLOCKS_CONCURRENCY: '10'
+      # Every container and every browser reaches the backend from the same Docker
+      # gateway address, so they all share one bucket — and the default 300/minute
+      # per IP is nothing for a chain mining every two seconds. Once it trips, the
+      # explorer 500s and Blockscout's own stats service cannot reach the API
+      # either. There is nothing here worth rate limiting.
+      API_RATE_LIMIT_DISABLED: 'true'
 
   frontend:
     environment:
