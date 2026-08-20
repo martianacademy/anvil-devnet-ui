@@ -16,7 +16,7 @@ export async function fundERC20(
     port?: number,
     mappingSlot?: number
 ): Promise<void> {
-    await setTokenBalance(tokenAddress, walletAddress, parseUnits(amount, decimals), port, mappingSlot);
+    await setTokenBalance(tokenAddress, walletAddress, parseUnits(amount, decimals), port, mappingSlot, decimals);
 }
 
 export async function writeStorageSlot(

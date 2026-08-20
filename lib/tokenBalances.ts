@@ -1,6 +1,7 @@
 import { keccak256, hexToString, type Hex } from "viem";
 import { rpc, rpcBatch } from "./rpc.ts";
-import { MINIMAL_ERC20_BYTECODE, MOCK_ERC20_BALANCE_SLOT } from "./mockErc20.ts";
+import { MOCK_ERC20_BALANCE_SLOT } from "./mockErc20.ts";
+import { deployAt, erc20CreationBytecode } from "./codePatcher.ts";
 
 export interface TokenWatch {
     id: number;
@@ -174,11 +175,21 @@ async function hasCode(address: string, port?: number): Promise<boolean> {
 }
 
 /**
- * Guarantee a usable ERC20 at `tokenAddress`. Injects {@link MINIMAL_ERC20_BYTECODE}
- * when the address has no code (or code whose `balanceOf` reverts).
- * Returns true when we injected — the caller then knows the balance slot is 0.
+ * Guarantee a usable ERC20 at `tokenAddress`, installing the built-in token when
+ * the address has no working one. The supply is minted to `holder` by the
+ * constructor, so the injected token reports a coherent totalSupply rather than
+ * balances that add up to more than exists.
+ *
+ * Returns true when we installed — the caller then knows the balance slot is 0
+ * and that the balance is already set.
  */
-async function ensureContractExists(tokenAddress: string, port?: number): Promise<boolean> {
+async function ensureContractExists(
+    tokenAddress: string,
+    holder: string,
+    amount: bigint,
+    decimals: number,
+    port?: number
+): Promise<boolean> {
     if (await hasCode(tokenAddress, port)) {
         const probe = await rpc<string>("eth_call", [
             { to: tokenAddress, data: `${SELECTOR.balanceOf}${pad32("0x1")}` },
@@ -187,18 +198,11 @@ async function ensureContractExists(tokenAddress: string, port?: number): Promis
         if (probe !== null) return false; // existing token works — leave it alone
     }
 
-    await rpc("anvil_setCode", [tokenAddress, MINIMAL_ERC20_BYTECODE], port);
-
-    // anvil_setCode skips the constructor, so seed the metadata slots by hand.
-    // Solidity short string layout: rightpad(utf8) with (length * 2) in the last byte.
-    const nameHex = `0x${"4d6f636b20546f6b656e"}${"00".repeat(21)}14`;   // "Mock Token"
-    const symbolHex = `0x${"4d4f434b"}${"00".repeat(27)}08`;            // "MOCK"
-    await Promise.all([
-        rpc("anvil_setStorageAt", [tokenAddress, toWord(3), nameHex], port),
-        rpc("anvil_setStorageAt", [tokenAddress, toWord(4), symbolHex], port),
-        rpc("anvil_setStorageAt", [tokenAddress, toWord(5), toWord(18)], port),
-    ]);
-
+    await deployAt(
+        tokenAddress,
+        erc20CreationBytecode({ name: "Mock Token", symbol: "MOCK", decimals, totalSupply: amount, holder }),
+        port
+    );
     return true;
 }
 
@@ -212,12 +216,15 @@ export async function setTokenBalance(
     walletAddress: string,
     amount: bigint,
     port?: number,
-    mappingSlot?: number
+    mappingSlot?: number,
+    decimals = 18
 ): Promise<void> {
-    const injected = await ensureContractExists(tokenAddress, port);
+    const injected = await ensureContractExists(tokenAddress, walletAddress, amount, decimals, port);
+    // The constructor already credited the holder and set totalSupply to match.
+    if (injected) return;
 
     let slot = mappingSlot ?? MOCK_ERC20_BALANCE_SLOT;
-    if (mappingSlot === undefined && !injected) {
+    if (mappingSlot === undefined) {
         try {
             slot = await detectBalanceSlot(tokenAddress, walletAddress, port);
         } catch {

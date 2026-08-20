@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test \"tests/*.test.ts\"",
     "check": "bun run typecheck && bun run lint && bun run test",
-    "db:reset": "bun scripts/resetDb.ts"
+    "db:reset": "bun scripts/resetDb.ts",
+    "build:mock-erc20": "bun scripts/buildMockErc20.ts"
   },
   "dependencies": {
     "next": "16.1.6",

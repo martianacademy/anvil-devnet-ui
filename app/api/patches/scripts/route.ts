@@ -83,7 +83,7 @@ export async function POST(req: Request) {
                 if (op.type === "fund_native") {
                     await fundNative(op.address!, op.amount!, active.port);
                 } else if (op.type === "fund_erc20") {
-                    await setTokenBalance(op.token!, op.address!, parseUnits(op.amount!, op.decimals ?? 18), active.port);
+                    await setTokenBalance(op.token!, op.address!, parseUnits(op.amount!, op.decimals ?? 18), active.port, undefined, op.decimals ?? 18);
                 } else {
                     await writeStorageSlot(op.contract!, op.slot!, op.value!, active.port);
                 }

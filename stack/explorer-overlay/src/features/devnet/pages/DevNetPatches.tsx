@@ -9,6 +9,7 @@ import PageTitle from 'src/shell/page/title/PageTitle';
 
 import { devnetApi, DevNetApiError } from 'src/features/devnet/api/client';
 import { useNodeStatus } from 'src/features/devnet/api/useDevnet';
+import DevNetCodePatch from 'src/features/devnet/components/DevNetCodePatch';
 import DevNetField from 'src/features/devnet/components/DevNetField';
 import DevNetSection from 'src/features/devnet/components/DevNetSection';
 import DevNetStatusBar from 'src/features/devnet/components/DevNetStatusBar';
@@ -104,6 +105,8 @@ const DevNetPatches = () => {
       <PageTitle title="State patches" secondRow={ <DevNetStatusBar status={ status as NodeStatus } isLoading={ isLoading }/> }/>
 
       <Flex flexDir="column" gap={ 5 }>
+        <DevNetCodePatch isDisabled={ !status.running }/>
+
         <DevNetSection title="Fund native balance" description="Sets an account's ETH balance outright via anvil_setBalance.">
           <Grid templateColumns={{ base: '1fr', lg: '2fr 1fr auto' }} gap={ 4 } alignItems="flex-end">
             <DevNetField label="Address" value={ nativeAddress } onChange={ setNativeAddress } placeholder="0x…" isMono/>
@@ -114,7 +117,7 @@ const DevNetPatches = () => {
 
         <DevNetSection
           title="Fund ERC-20 balance"
-          description="Writes the balances mapping directly. The slot is auto-detected; a minimal ERC-20 is injected when the address has no code."
+          description="Writes the balances mapping directly. The slot is auto-detected; the built-in ERC-20 is installed when the address has no code."
         >
           <Grid templateColumns={{ base: '1fr', lg: '1fr 1fr' }} gap={ 4 }>
             <DevNetField label="Token address" value={ tokenAddress } onChange={ setTokenAddress } placeholder="0x…" isMono/>

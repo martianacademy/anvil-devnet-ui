@@ -176,9 +176,26 @@ curl -X POST http://localhost:3010/api/anvil/start \
   -d '{ "chainId": 56, "port": 8546, "blockTime": 2, "accounts": 10, "balance": 10000 }'
 ```
 
-Then use the state patches to make a mainnet address behave like the real thing — set its code with
-`anvil_setCode` through `/api/rpc`, or fund an ERC-20 balance at that address with
-`/api/patches/fund`, which injects a minimal ERC-20 when the address has no code.
+Then use the state patches to make a mainnet address behave like the real thing. `/api/patches/code`
+installs contract code at any address — the built-in ERC-20 with the metadata you choose, your own
+creation bytecode, or raw runtime bytecode:
+
+```bash
+# BSC's real USDT address, now a working token on your local chain
+curl -X POST http://localhost:3010/api/patches/code \
+  -H "Content-Type: application/json" \
+  -d '{
+    "address": "0x55d398326f99059fF775485246999027B3197955",
+    "mode": "erc20", "name": "Tether USD", "symbol": "USDT",
+    "decimals": 18, "totalSupply": "1000000",
+    "holder": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+  }'
+```
+
+The explorer then shows it as Tether USD (USDT) and indexes its transfers like any other token.
+
+Forking pulls the upstream chain's blocks and history into your explorer, which is rarely what you
+want on a devnet — and public RPCs are unreliable enough that Anvil can panic mid-mine against them.
 
 Forking pulls the upstream chain's blocks and history into your explorer, which is rarely what you
 want on a devnet — and public RPCs are unreliable enough that Anvil can panic mid-mine against them.
@@ -359,6 +376,10 @@ curl -X POST http://localhost:3010/api/anvil/start \
 
 | Method | Route | Body / params | Description |
 | --- | --- | --- | --- |
+| `GET` | `/api/patches/code` | `?address=0x…` | What code (and token metadata) is at an address |
+| `POST` | `/api/patches/code` | `{ address, mode: "erc20", name, symbol, decimals?, totalSupply?, holder? }` | Install the built-in ERC-20 at an address |
+| `POST` | `/api/patches/code` | `{ address, mode: "creation", bytecode, constructorArgs? }` | Run your constructor and install what it deploys |
+| `POST` | `/api/patches/code` | `{ address, mode: "runtime", bytecode }` | Write runtime bytecode verbatim |
 | `POST` | `/api/patches/fund` | `{ type: "native", address, amount }` | Set an ETH balance |
 | `POST` | `/api/patches/fund` | `{ type: "erc20", token, address, amount, decimals?, mappingSlot? }` | Set an ERC-20 balance |
 | `GET` | `/api/patches/storage` | `?contract=0x…&slot=0x0` | Read a storage slot |
@@ -459,11 +480,14 @@ anvil-devnet-ui/
 │   ├── txStore.ts                # block / tx / trace persistence
 │   ├── abiRegistry.ts            # ABI storage, decoding, Sourcify + Etherscan V2
 │   ├── patcher.ts                # fund native, fund ERC-20, write storage
+│   ├── codePatcher.ts            # install contract code + constructor storage at an address
 │   ├── tokenBalances.ts          # balances, slot detection, mock ERC-20 injection
 │   ├── projectStore.ts           # project CRUD + cascade delete
 │   ├── validate.ts / route.ts    # input validation and uniform error handling
 │   └── rpc.ts                    # viem client + rpc()/rpcBatch()
 ├── proxy.ts                      # read-only guard (DEVNET_READONLY)
+├── contracts/
+│   └── MockERC20.sol             # the token /api/patches/code installs (bun run build:mock-erc20)
 ├── stack/
 │   ├── setup.sh                  # fetch Blockscout, apply the DevNet overlay
 │   ├── docker-compose/           # devnet.override.yml for Blockscout's anvil preset

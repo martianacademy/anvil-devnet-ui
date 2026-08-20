@@ -22,7 +22,7 @@ export async function POST(req: Request) {
                 ? undefined
                 : assertInt(body.mappingSlot, "mappingSlot", 0, 200);
             // parseUnits keeps full precision — float math loses it above ~15 digits.
-            await setTokenBalance(token, address, parseUnits(amount, decimals), active.port, mappingSlot);
+            await setTokenBalance(token, address, parseUnits(amount, decimals), active.port, mappingSlot, decimals);
         } else {
             throw new ValidationError(`Unknown fund type: ${body.type}`);
         }
