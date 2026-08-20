@@ -11,9 +11,14 @@ import { shortHex } from 'src/features/devnet/api/traceEntries';
 import CopyToClipboard from 'src/shared/texts/CopyToClipboard';
 import SpriteIcon from 'src/sprite/SpriteIcon';
 
+import type { BadgeProps } from 'src/toolkit/chakra/badge';
 import { Badge } from 'src/toolkit/chakra/badge';
 
-const KIND_PALETTE: Record<string, string> = {
+// Taken from the Badge itself rather than widened to string: the theme owns the
+// palette names, so a rename upstream should break here, not render a blank badge.
+type BadgePalette = NonNullable<BadgeProps['colorPalette']>;
+
+const KIND_PALETTE: Record<string, BadgePalette> = {
   CALL: 'blue',
   DELEGATECALL: 'purple',
   STATICCALL: 'teal',

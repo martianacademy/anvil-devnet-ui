@@ -84,6 +84,9 @@ echo "→ Frontend dependencies"
 # --ignore-scripts: a transitive WebRTC dependency builds native code and fails
 # without Xcode CLT / build tools. Nothing here needs it at runtime.
 ( cd "$FRONTEND_DIR" && pnpm install --ignore-scripts --prefer-offline )
+# --ignore-scripts also skips Blockscout's postinstall, which generates Chakra's
+# recipe types. Without it `pnpm lint:tsc` fails on upstream's own components.
+( cd "$FRONTEND_DIR" && pnpm chakra:typegen )
 ( cd "$FRONTEND_DIR" && pnpm routes:generate >/dev/null )
 echo "  ✓ installed"
 

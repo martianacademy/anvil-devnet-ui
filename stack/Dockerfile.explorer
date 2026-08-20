@@ -71,6 +71,12 @@ ENV npm_config_store_dir=/pnpm-store \
 RUN --mount=type=cache,target=/pnpm-store,sharing=locked \
     pnpm install --ignore-scripts --frozen-lockfile
 
+# --ignore-scripts above also skips Blockscout's postinstall, which is Chakra's
+# typegen. Without it every recipe variant the theme defines — status="warning_table",
+# variant="header" and friends — is unknown to TypeScript and the build fails
+# typechecking on upstream's own code.
+RUN pnpm chakra:typegen
+
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # `pnpm build` is only `next build`. The icon sprite is generated, not committed
