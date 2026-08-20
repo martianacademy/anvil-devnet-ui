@@ -1,6 +1,7 @@
 import os from "os";
 import { getAnvilState, isAnvilRunning } from "@/lib/anvilProcess";
 import { resolveFromRequest } from "@/lib/activeProject";
+import { getExplorerSyncState } from "@/lib/explorerStack";
 import { handleRoute } from "@/lib/route";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +50,13 @@ async function probePort(port: number): Promise<Probe | null> {
     }
 }
 
+/**
+ * The node the explorer's indexer is pointed at. A node running anywhere else is
+ * invisible to Blockscout, which is a confusing failure to debug from the UI.
+ */
+const EXPLORER_RPC_PORT = Number(process.env.DEVNET_RPC_PORT ?? 8545) || 8545;
+const EXPLORER_CHAIN_ID = Number(process.env.DEVNET_CHAIN_ID ?? 31337) || 31337;
+
 export async function GET(req: Request) {
     return handleRoute(async () => {
         const active = resolveFromRequest(req);
@@ -80,6 +88,13 @@ export async function GET(req: Request) {
             projectId: active.projectId,
             lastError: state.lastError,
             config: state.config ? { ...state.config, port, chainId } : null,
+            explorer: {
+                rpcPort: EXPLORER_RPC_PORT,
+                chainId: EXPLORER_CHAIN_ID,
+                /** False when this node is running somewhere the indexer is not watching. */
+                indexed: !running || port === EXPLORER_RPC_PORT,
+                sync: getExplorerSyncState(),
+            },
         };
     });
 }

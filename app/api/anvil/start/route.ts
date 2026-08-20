@@ -1,6 +1,7 @@
 import { startAnvil, type AnvilConfig } from "@/lib/anvilProcess";
 import { resetRpcClients } from "@/lib/rpc";
 import { invalidateActiveProjectCache } from "@/lib/activeProject";
+import { syncExplorer } from "@/lib/explorerStack";
 import { assertHttpUrl, assertInt } from "@/lib/validate";
 import { handleRoute } from "@/lib/route";
 
@@ -39,12 +40,18 @@ export async function POST(req: Request) {
         const resolved = await startAnvil(config);
         resetRpcClients();
         invalidateActiveProjectCache();
+
+        // A fresh node means a fresh chain: point the explorer at it and drop the
+        // index of whatever chain it was serving before.
+        const explorerSync = syncExplorer(resolved.chainId, resolved.port);
+
         return {
             success: true,
             port: resolved.port,
             chainId: resolved.chainId,
             forkBlockNumber: resolved.forkBlockNumber ?? null,
             rpcUrl: `http://127.0.0.1:${resolved.port}`,
+            explorerSync,
         };
     });
 }

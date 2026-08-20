@@ -2,6 +2,7 @@ import { getProject, updateProjectStatus, updateProjectConfig } from "@/lib/proj
 import { startAnvil, stateFilePath, type AnvilConfig } from "@/lib/anvilProcess";
 import { resetRpcClients } from "@/lib/rpc";
 import { invalidateActiveProjectCache } from "@/lib/activeProject";
+import { syncExplorer } from "@/lib/explorerStack";
 import { NextResponse } from "next/server";
 
 interface RouteParams {
@@ -38,9 +39,11 @@ export async function POST(_req: Request, { params }: RouteParams) {
         updateProjectConfig(id, { ...existingConfig, forkBlockNumber: resolved.forkBlockNumber });
         resetRpcClients();
         invalidateActiveProjectCache();
+        const explorerSync = syncExplorer(resolved.chainId, resolved.port);
 
         return NextResponse.json({
             success: true,
+            explorerSync,
             port: resolved.port,
             chainId: resolved.chainId,
             forkBlockNumber: resolved.forkBlockNumber ?? null,

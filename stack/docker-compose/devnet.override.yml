@@ -14,6 +14,10 @@ services:
       ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:${DEVNET_RPC_PORT:-8546}/
       ETHEREUM_JSONRPC_WS_URL: ws://host.docker.internal:${DEVNET_RPC_PORT:-8546}/
       CHAIN_ID: '${DEVNET_CHAIN_ID:-31337}'
+      # A fork starts at mainnet's height, so without these the catchup indexer
+      # would try to backfill every block from genesis through the fork RPC.
+      FIRST_BLOCK: '${DEVNET_FIRST_BLOCK:-0}'
+      TRACE_FIRST_BLOCK: '${DEVNET_FIRST_BLOCK:-0}'
       # The bundled Postgres has no TLS; without this Ecto attempts SSL, the
       # server logs "invalid length of startup packet" and the pool never connects.
       ECTO_USE_SSL: 'false'

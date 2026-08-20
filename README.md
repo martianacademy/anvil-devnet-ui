@@ -143,6 +143,48 @@ volumes and reindexes from scratch.
 
 ---
 
+## Chain id, restarts and the explorer index
+
+Starting or resetting a node from `/devnet` reconfigures Blockscout automatically:
+
+- the indexer is pointed at the node's port and chain id
+- its databases are dropped, so the previous chain's blocks cannot linger
+- the explorer UI is relabelled for the chain (`BNB Chain DevNet`, BNB, chain 56, …) and restarted
+- indexing restarts from block 0
+
+That last point matters because Blockscout indexes by block height. A devnet that restarts at
+block 0 would otherwise collide with the old chain's history, and you would see transactions that
+no longer exist. The `/devnet` page shows the progress while the containers come back — usually a
+minute or two.
+
+Set `DEVNET_EXPLORER_AUTOSYNC=0` to turn this off and manage the stack by hand.
+
+> **Blockscout keeps Postgres in bind mounts, not named volumes**, so `docker compose down -v`
+> alone does *not* delete the old chain's data — `services/blockscout-db-data`,
+> `services/stats-db-data` and `services/dets` have to be removed as well. Both the auto-sync and
+> `./devnet.sh reset` do this.
+
+### Running a mainnet chain id without forking
+
+You do not need a fork to work against a chain id like 56. Start a plain node with that id and put
+the code you want at the address you want:
+
+```bash
+# a local BNB Chain devnet — no fork, no upstream history
+curl -X POST http://localhost:3010/api/anvil/start \
+  -H "Content-Type: application/json" \
+  -d '{ "chainId": 56, "port": 8546, "blockTime": 2, "accounts": 10, "balance": 10000 }'
+```
+
+Then use the state patches to make a mainnet address behave like the real thing — set its code with
+`anvil_setCode` through `/api/rpc`, or fund an ERC-20 balance at that address with
+`/api/patches/fund`, which injects a minimal ERC-20 when the address has no code.
+
+Forking pulls the upstream chain's blocks and history into your explorer, which is rarely what you
+want on a devnet — and public RPCs are unreliable enough that Anvil can panic mid-mine against them.
+
+---
+
 ## Sharing it on your network
 
 Teammates on the same Wi-Fi can point MetaMask at your chain and browse it in the explorer:
@@ -165,6 +207,10 @@ rewrites them to your address and restarts the UI.
 
 `./devnet.sh local` puts it back. Re-run `expose` if your IP changes — a laptop that switches
 networks will leave the explorer pointing at an address that no longer exists.
+
+While exposed, open the explorer at `http://<your-ip>:3000` on your own machine too.
+`http://localhost:3000` will render but fail to load data: the app calls its own API on
+`<your-ip>`, and the browser blocks that as a cross-origin request.
 
 ### Read-only mode
 

@@ -14,6 +14,25 @@ export interface NodeStatus {
   projectId: string | null;
   lastError: string | null;
   config: Record<string, unknown> | null;
+  explorer?: {
+
+    /** Port the Blockscout indexer is watching. */
+    rpcPort: number;
+    chainId: number;
+
+    /** False when the running node is on a port the indexer ignores. */
+    indexed: boolean;
+
+    /** Progress of the automatic reindex triggered by a node start or reset. */
+    sync?: {
+      status: 'idle' | 'syncing' | 'ready' | 'error' | 'unavailable';
+      chainId: number | null;
+      port: number | null;
+      message: string | null;
+      startedAt: number | null;
+      finishedAt: number | null;
+    };
+  };
 }
 
 export interface StartNodeParams {

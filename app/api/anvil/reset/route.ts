@@ -2,6 +2,7 @@ import fs from "fs";
 import { getAnvilState, isAnvilRunning, stopAnvil, stateFilePath, logPathFor, LEGACY_KEY } from "@/lib/anvilProcess";
 import { getDB, scopeId } from "@/lib/db";
 import { resolveFromRequest, invalidateActiveProjectCache } from "@/lib/activeProject";
+import { syncExplorer } from "@/lib/explorerStack";
 import { resetRpcClients } from "@/lib/rpc";
 import { assertInt } from "@/lib/validate";
 import { handleRoute } from "@/lib/route";
@@ -55,6 +56,9 @@ export async function POST(req: Request) {
         resetRpcClients();
         invalidateActiveProjectCache();
 
-        return { success: true, chainId, projectId, deleted, deletedRows };
+        // The explorer's index belongs to the chain we just wiped.
+        const explorerSync = syncExplorer(chainId, active.port);
+
+        return { success: true, chainId, projectId, deleted, deletedRows, explorerSync };
     });
 }

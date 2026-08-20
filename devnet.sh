@@ -8,6 +8,7 @@
 #   ./devnet.sh logs        tail the control API + explorer logs
 #   ./devnet.sh expose [ip] serve the UI and RPC to your local network
 #   ./devnet.sh local       point everything back at localhost
+#   ./devnet.sh fork <url>  fork a chain and reindex the explorer for it
 #
 # Ports: 3000 explorer UI (Blockscout frontend fork) · 3010 DevNet Control API
 #        80 Blockscout backend/API via nginx · ${DEVNET_RPC_PORT} the Anvil node
@@ -30,6 +31,9 @@ LOG_DIR="$WORKSPACE/.devnet-logs"
 export DEVNET_RPC_PORT="${DEVNET_RPC_PORT:-8546}"
 export DEVNET_CHAIN_ID="${DEVNET_CHAIN_ID:-31337}"
 export DEVNET_API_PORT="${DEVNET_API_PORT:-3010}"
+# Blockscout indexes from here; a fork must set it or the catchup indexer walks
+# every block from genesis.
+export DEVNET_FIRST_BLOCK="${DEVNET_FIRST_BLOCK:-0}"
 
 compose() {
   docker compose -f "$COMPOSE_DIR/anvil.yml" -f "$COMPOSE_DIR/devnet.override.yml" "$@"
@@ -99,7 +103,7 @@ cmd_up() {
 cmd_down() {
   pkill -f "next dev -p $DEVNET_API_PORT" 2>/dev/null || true
   pkill -f "next dev -p 3000" 2>/dev/null || true
-  compose down
+  compose down --timeout 30
   echo "Stopped the UI, the control API and the Blockscout containers (anvil left running)."
 }
 
@@ -113,7 +117,9 @@ cmd_reset() {
   curl -sf -m 30 -X POST "http://localhost:$DEVNET_API_PORT/api/anvil/reset" \
     -H 'content-type: application/json' -d "{\"chainId\":$DEVNET_CHAIN_ID}" >/dev/null || true
 
-  compose down -v
+  compose down -v --timeout 30
+  # Blockscout keeps Postgres in bind mounts, which `down -v` does not remove.
+  rm -rf "$COMPOSE_DIR/services/blockscout-db-data" "$COMPOSE_DIR/services/stats-db-data" "$COMPOSE_DIR/services/dets"
   pkill -f "anvil --host 0.0.0.0 --port $DEVNET_RPC_PORT" 2>/dev/null || true
   sleep 2
   cmd_up
@@ -186,6 +192,9 @@ cmd_expose() {
   restart_frontend
 
   echo
+  echo "Use this address yourself too — while exposed, http://localhost:3000 breaks:"
+  echo "  the app calls its own API on $host, and the browser blocks that as cross-origin."
+  echo
   echo "Share these on your network:"
   echo "  Explorer:  http://$host:3000"
   echo "  RPC:       http://$host:$DEVNET_RPC_PORT     (chain id $DEVNET_CHAIN_ID)"
@@ -196,6 +205,106 @@ cmd_expose() {
   echo "    For a shared network, restart it read-only:"
   echo "      ./devnet.sh down && DEVNET_READONLY=1 ./devnet.sh up && ./devnet.sh expose $host"
   echo "    macOS may prompt to allow incoming connections the first time."
+}
+
+rpc_call() { # url, method
+  curl -sf -m 15 -X POST "$1" -H 'content-type: application/json' \
+    -d "{\"jsonrpc\":\"2.0\",\"method\":\"$2\",\"params\":[],\"id\":1}" |
+    sed -E 's/.*"result":"?([^",}]*)"?.*/\1/'
+}
+
+hex_to_dec() { python3 -c "import sys; print(int(sys.argv[1], 16))" "$1"; }
+
+# Well-known chains, so the explorer shows the right name and ticker.
+chain_meta() { # chainId -> "Name|SYMBOL|Currency name"
+  case "$1" in
+    1) echo "Ethereum Fork|ETH|Ether" ;;
+    56) echo "BNB Smart Chain Fork|BNB|BNB" ;;
+    137) echo "Polygon Fork|POL|POL" ;;
+    204) echo "opBNB Fork|BNB|BNB" ;;
+    8453) echo "Base Fork|ETH|Ether" ;;
+    42161) echo "Arbitrum Fork|ETH|Ether" ;;
+    10) echo "Optimism Fork|ETH|Ether" ;;
+    43114) echo "Avalanche Fork|AVAX|Avalanche" ;;
+    *) echo "Chain $1 Fork|ETH|Ether" ;;
+  esac
+}
+
+# Fork a live chain and rebuild the whole stack around it: anvil on the indexed
+# port, a fresh Blockscout database for the new chain, and a UI labelled for it.
+cmd_fork() {
+  local url="${1:-}"
+  [ -n "$url" ] || { echo "Usage: ./devnet.sh fork <rpc-url> [chainId]" >&2; exit 1; }
+
+  mkdir -p "$LOG_DIR"
+
+  echo "→ probing $url"
+  local chain_hex chain_id
+  chain_hex="$(rpc_call "$url" eth_chainId)" || { echo "🚨 Could not reach $url" >&2; exit 1; }
+  chain_id="${2:-$(hex_to_dec "$chain_hex")}"
+  echo "  ✓ chain id $chain_id"
+
+  echo "→ starting the fork on port $DEVNET_RPC_PORT"
+  pkill -f "anvil --host 0.0.0.0 --port $DEVNET_RPC_PORT" 2>/dev/null || true
+  sleep 1
+  nohup anvil --host 0.0.0.0 --port "$DEVNET_RPC_PORT" --chain-id "$chain_id" \
+        --fork-url "$url" --steps-tracing --no-storage-caching \
+        > "$LOG_DIR/anvil.log" 2>&1 &
+
+  # A JSON-RPC endpoint rejects the plain GET that wait_for uses, so poll it with
+  # an actual call instead.
+  local block_hex fork_block
+  for _ in $(seq 1 45); do
+    block_hex="$(rpc_call "http://127.0.0.1:$DEVNET_RPC_PORT" eth_blockNumber || true)"
+    [ -n "$block_hex" ] && break
+    sleep 2
+  done
+  [ -n "$block_hex" ] || { echo "🚨 The fork did not start — see $LOG_DIR/anvil.log" >&2; exit 1; }
+  fork_block="$(hex_to_dec "$block_hex")"
+  echo "  ✓ forked at block $fork_block"
+
+  echo "→ reindexing Blockscout for chain $chain_id from block $fork_block"
+  export DEVNET_CHAIN_ID="$chain_id"
+  export DEVNET_FIRST_BLOCK="$fork_block"
+  compose down -v --timeout 30 >/dev/null 2>&1 || true
+  rm -rf "$COMPOSE_DIR/services/blockscout-db-data" "$COMPOSE_DIR/services/stats-db-data" "$COMPOSE_DIR/services/dets"
+  compose up -d
+  wait_for "http://localhost/api/v2/config/backend-version" "blockscout api" 120 || {
+    docker restart proxy >/dev/null
+    wait_for "http://localhost/api/v2/config/backend-version" "blockscout api (after proxy restart)" 40
+  }
+
+  local meta name symbol currency
+  meta="$(chain_meta "$chain_id")"
+  name="${meta%%|*}"; meta="${meta#*|}"
+  symbol="${meta%%|*}"; currency="${meta#*|}"
+
+  local env_file="$FRONTEND_DIR/.env.local"
+  local tmp; tmp="$(mktemp)"
+  sed -E \
+    -e "s|^NEXT_PUBLIC_NETWORK_ID=.*|NEXT_PUBLIC_NETWORK_ID=${chain_id}|" \
+    -e "s|^NEXT_PUBLIC_NETWORK_NAME=.*|NEXT_PUBLIC_NETWORK_NAME=${name}|" \
+    -e "s|^NEXT_PUBLIC_NETWORK_SHORT_NAME=.*|NEXT_PUBLIC_NETWORK_SHORT_NAME=${symbol} Fork|" \
+    -e "s|^NEXT_PUBLIC_NETWORK_CURRENCY_NAME=.*|NEXT_PUBLIC_NETWORK_CURRENCY_NAME=${currency}|" \
+    -e "s|^NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL=.*|NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL=${symbol}|" \
+    "$env_file" > "$tmp"
+  mv "$tmp" "$env_file"
+
+  echo "→ restarting the control API and the UI"
+  pkill -f "next dev -p $DEVNET_API_PORT" 2>/dev/null || true
+  sleep 1
+  (cd "$CONTROL_DIR" && DEVNET_API_PORT="$DEVNET_API_PORT" DEVNET_RPC_PORT="$DEVNET_RPC_PORT" \
+    DEVNET_CHAIN_ID="$chain_id" DEVNET_READONLY="${DEVNET_READONLY:-}" \
+    bun dev > "$LOG_DIR/control-api.log" 2>&1 &)
+  wait_for "http://localhost:$DEVNET_API_PORT/api/anvil/status" "control api" 40
+  restart_frontend
+
+  echo
+  echo "$name is live — chain $chain_id, forked at block $fork_block."
+  echo "  Explorer: http://localhost:3000"
+  echo "  RPC:      http://127.0.0.1:$DEVNET_RPC_PORT"
+  echo
+  echo "Only blocks from $fork_block onwards are indexed; history stays on the upstream chain."
 }
 
 cmd_local() {
@@ -214,5 +323,6 @@ case "${1:-up}" in
   logs) cmd_logs ;;
   expose) cmd_expose "${2:-}" ;;
   local) cmd_local ;;
+  fork) cmd_fork "${2:-}" "${3:-}" ;;
   *) sed -n '2,12p' "$0"; exit 1 ;;
 esac
