@@ -1,6 +1,7 @@
 {
   "name": "anvil-devnet-ui",
   "version": "1.1.0",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "dev": "next dev -p ${DEVNET_API_PORT:-3010}",
@@ -11,7 +12,8 @@
     "test": "node --test \"tests/*.test.ts\"",
     "check": "bun run typecheck && bun run lint && bun run test",
     "db:reset": "bun scripts/resetDb.ts",
-    "build:mock-erc20": "bun scripts/buildMockErc20.ts"
+    "build:mock-erc20": "bun scripts/buildMockErc20.ts",
+    "smoke": "next build && node --experimental-strip-types scripts/smoke.ts"
   },
   "dependencies": {
     "next": "16.1.6",

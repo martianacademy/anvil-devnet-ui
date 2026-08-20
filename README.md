@@ -104,7 +104,12 @@ is Blockscout's frontend with a set of DevNet pages layered on top by `stack/set
 
 ## Requirements
 
-- **Docker** — Blockscout runs as ~10 containers; give Docker Desktop about 8 GB
+**Docker alone is enough.** Give Docker Desktop about 8 GB — Blockscout is ~10 containers, and the
+DevNet control API and explorer UI are two more.
+
+To run the control API and the explorer as host processes instead (faster edit-reload while hacking
+on this project), you also need:
+
 - **Node.js ≥ 22.5** — persistence uses the built-in `node:sqlite`, so there is no native module to compile
 - **Bun ≥ 1.3** and **pnpm ≥ 9**
 - **Foundry** — `anvil` on your `$PATH` ([install guide](https://book.getfoundry.sh/getting-started/installation))
@@ -117,10 +122,30 @@ is Blockscout's frontend with a set of DevNet pages layered on top by `stack/set
 git clone https://github.com/martianacademy/anvil-devnet-ui.git
 cd anvil-devnet-ui
 
-bun install          # control API dependencies
-./stack/setup.sh     # fetch Blockscout + build the explorer with the DevNet pages
-./devnet.sh up       # start anvil, Blockscout, the control API and the UI
+./stack/setup.sh --docker   # fetch Blockscout's compose files
+./devnet.sh up --docker     # build the explorer image, then start everything
 ```
+
+The control API image is pulled from
+[`ghcr.io/martianacademy/anvil-devnet-api`](https://github.com/martianacademy/anvil-devnet-ui/pkgs/container/anvil-devnet-api)
+(amd64 and arm64) and carries Anvil inside it, so no Foundry install is needed.
+
+The explorer UI image is **built on your machine** and never pulled. That is not a packaging
+oversight: it contains a modified Blockscout frontend, and Blockscout's licence forbids distributing
+derivative works — see [Licence and attribution](#licence-and-attribution). The first build compiles
+their frontend and takes several minutes; after that it is cached.
+
+### Running it from source instead
+
+```bash
+bun install          # control API dependencies
+./stack/setup.sh     # also clones and builds the explorer frontend
+./devnet.sh up       # anvil, Blockscout, the control API and the UI as host processes
+```
+
+Both paths serve the same thing on the same ports. The difference is where the control API, the
+explorer UI and Anvil run — containers, or your machine. `--docker` works on `up`, `down`, `reset`
+and `status`.
 
 Open **http://localhost:3000**. First boot pulls a few GB of images and runs database migrations, so
 give it a couple of minutes; later starts take seconds.
@@ -142,6 +167,8 @@ here — see [Licence and attribution](#licence-and-attribution).
 ./devnet.sh expose      # serve the UI and RPC to your local network
 ./devnet.sh local       # point everything back at localhost
 ./devnet.sh fork <url>  # reset into a fork, with the indexer pinned to the fork height
+
+./devnet.sh up --docker # …any of the above, with everything in containers
 ```
 
 `reset` matters: Blockscout indexes by block height, so when Anvil restarts at block 0 the indexer
@@ -276,6 +303,9 @@ macOS may ask to allow incoming connections the first time you expose the stack.
 | `DEVNET_DB_PATH` | `./devnet.db` | Move the SQLite file elsewhere |
 | `DEVNET_READONLY` | unset | `1` disables every state-changing route and RPC method |
 | `DEVNET_EXPLORER_AUTOSYNC` | `1` | `0` stops the explorer from following the node; manage the stack yourself |
+| `DEVNET_RPC_HOST` | `host.docker.internal` | Host the Blockscout indexer reaches the node on. `--docker` sets it to the API container |
+| `DEVNET_PUBLIC_HOST` | `localhost` | Host a *browser* uses for the explorer and the RPC; `devnet.sh expose` rewrites it |
+| `DEVNET_COMPOSE_DIR` | `../blockscout/docker-compose` | Where Blockscout's compose files live |
 | `DEVNET_FIRST_BLOCK` | `0` | Height the indexer starts from — `devnet.sh fork` sets it to the fork block |
 | `ETHERSCAN_API_KEY` | — | Enables ABI auto-fetch from Etherscan V2 (multichain). Sourcify needs no key |
 
@@ -297,10 +327,17 @@ bun run check           # typecheck + lint + test
 bun run db:reset        # delete devnet.db and its WAL sidecars
 bun run db:reset --all  # …and the persisted Anvil state dumps + logs
 bun run build:mock-erc20  # recompile contracts/MockERC20.sol into lib/mockErc20.ts (needs solc)
+bun run smoke           # build, then run the end-to-end smoke test against a real Anvil
 ```
 
 Tests run on Node's built-in runner with native TypeScript support — no build step and no test
-framework dependency. They cover the pure layers: formatting, input validation, indexer mapping,
+framework dependency. `bun run smoke` goes further: it boots a real Anvil and the built server and
+drives them over HTTP — node discovery, reading a node's config off the wire, installing ERC-20 code,
+a real transfer, the trace pipeline and its cache, the Etherscan-compatible API, and a 400 for bad
+input. Both run in CI on every push, because every bug that has actually shipped lived in the seams
+rather than in the pure layers.
+
+The unit tests cover the pure layers: formatting, input validation, indexer mapping,
 Anvil argument construction, storage-slot derivation, the SQLite schema and migrations, project
 resolution, block-time inference from block timestamps, and the ERC-20 constructor encoding the code
 patcher installs.
@@ -521,14 +558,16 @@ anvil-devnet-ui/
 │   └── rpc.ts                    # viem client + rpc()/rpcBatch()
 ├── proxy.ts                      # read-only guard (DEVNET_READONLY)
 ├── instrumentation.ts            # the watcher that keeps the explorer on the live node
+├── Dockerfile                    # the control API image (published — no Blockscout in it)
 ├── contracts/
 │   └── MockERC20.sol             # the token /api/patches/code installs (bun run build:mock-erc20)
 ├── stack/
 │   ├── setup.sh                  # fetch Blockscout, apply the DevNet overlay
-│   ├── docker-compose/           # devnet.override.yml for Blockscout's anvil preset
+│   ├── Dockerfile.explorer       # the explorer UI image — built locally, never published
+│   ├── docker-compose/           # devnet.override.yml + devnet-stack.yml
 │   └── explorer-overlay/         # the DevNet UI (our code) + upstream.patch
 ├── tests/                        # node --test unit tests
-├── scripts/                      # resetDb.ts, buildMockErc20.ts
+├── scripts/                      # resetDb.ts, buildMockErc20.ts, smoke.ts
 └── devnet.sh                     # start / stop / reset the whole stack
 ```
 
@@ -547,21 +586,35 @@ anvil-devnet-ui/
 | `pnpm dev:local` fails on **`git describe`** | The frontend clone has no tags. `git tag devnet-fork-base` inside it (also done by `stack/setup.sh`). |
 | **“Cannot find module node:sqlite”** | Node is older than 22.5. Upgrade Node — Bun does not implement `node:sqlite`, but `next dev`/`next build` run under Node anyway. |
 | Explorer pages **500**, everything returns `Too Many Requests` | Blockscout's API rate limit — 300 requests per minute per IP by default. The frontend, the stats service and every browser all reach the backend from the same Docker gateway address, so they share one bucket, and a chain mining every two seconds empties it. `API_RATE_LIMIT_DISABLED=true` is set in `devnet.override.yml`; make sure the override is passed. |
+| The explorer image **fails to build** at `git apply` | Blockscout moved a file this project patches. `stack/Dockerfile.explorer` pins the upstream commit `upstream.patch` was generated against — if you bumped `BLOCKSCOUT_FRONTEND_REF`, regenerate the patch against the new tree. |
+| `--docker`: a node started **on your host is invisible** | The control API talks to nodes over `127.0.0.1`, which inside a container is the container. With `--docker`, start the node from the `/devnet` page so it runs there too. Use the from-source path if you want to keep starting Anvil by hand. |
+| `--docker`: a node on a **non-default port is unreachable from the host** | Only `DEVNET_RPC_PORT` is published from the API container. The indexer still follows the node over the compose network, but `cast`/MetaMask on your machine will not reach it — restart with `DEVNET_RPC_PORT=<port> ./devnet.sh up --docker`. |
+| `--docker`: the explorer **stops following the node** | The auto-sync runs `docker compose` against the host daemon, so the compose directory is bind-mounted at the same absolute path inside the container. A different `DEVNET_COMPOSE_DIR` on either side breaks it. |
 | The trace tab says **tracing unavailable** | The node was started without `--steps-tracing`, or you are on a fork whose RPC blocks `debug_traceTransaction`. |
 
 ---
 
 ## Licence and attribution
 
-> **Note:** this repository does not carry a licence file yet, which means default copyright applies
-> and others cannot legally reuse it. Add one (MIT is the usual choice for developer tooling) if you
-> want contributions and forks.
+This repository is **MIT** licensed — see [LICENSE](LICENSE).
 
-The explorer is [Blockscout](https://github.com/blockscout/blockscout), which is distributed under
-its own licence (`LicenseRef-Blockscout`). That licence is non-transferable and non-sublicensable, so
-**Blockscout's source is not vendored here** — `stack/setup.sh` fetches it from Blockscout directly
-and applies our overlay locally. Blockscout's branding and footer attribution are left intact, as its
-licence requires. Read their licence before deploying anything based on it.
+That covers this project's code only. The explorer is
+[Blockscout](https://github.com/blockscout/blockscout), distributed under its own licence
+(`LicenseRef-Blockscout`), and **Blockscout's source is not vendored here** — `stack/setup.sh`
+fetches it from Blockscout directly and applies our overlay on your machine.
+
+Two clauses of that licence shape how this project is built and distributed:
+
+- **§4(b) — derivative works may not be distributed.** The patched frontend is a derivative work, so
+  it may be created for your own use but not handed to third parties without a commercial licence
+  from Blockscout. That is why the explorer UI image is built locally by `docker compose` and is
+  never published to a registry. The control API image, which contains none of Blockscout's code, is.
+- **§4(d) — modified files must say so.** Each upstream file this project patches carries a notice
+  naming the project and the date it was modified.
+
+Blockscout's branding and footer attribution are left intact, as its licence requires. Read
+[their licence](https://github.com/blockscout/frontend/blob/main/LICENSE) before deploying anything
+based on it.
 
 Built with [Foundry](https://github.com/foundry-rs/foundry) (Anvil), [viem](https://viem.sh),
 [Next.js](https://nextjs.org) and [Blockscout](https://blockscout.com).

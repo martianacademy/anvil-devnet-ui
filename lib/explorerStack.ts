@@ -293,6 +293,10 @@ export function syncExplorer(chainId: number, port: number): ExplorerSyncState {
         DEVNET_RPC_PORT: String(port),
         DEVNET_CHAIN_ID: String(chainId),
         DEVNET_FIRST_BLOCK: "0",
+        // Which host the indexer reaches the node on. On the host path that is
+        // the Docker host; when this API runs as a container, the node is inside
+        // it and host.docker.internal would point at the wrong machine.
+        DEVNET_RPC_HOST: process.env.DEVNET_RPC_HOST ?? "host.docker.internal",
     };
 
     store.pending = store.pending

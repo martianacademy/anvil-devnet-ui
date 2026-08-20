@@ -1,0 +1,45 @@
+MIT License
+
+Copyright (c) 2026 martianacademy
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+This licence covers the contents of this repository only.
+
+The explorer this project drives is Blockscout, which is distributed under its
+own licence (LicenseRef-Blockscout) and is NOT covered by the MIT licence
+above. Blockscout's source is not included in this repository — stack/setup.sh
+fetches it from Blockscout and applies this project's overlay on your machine.
+
+Two consequences of Blockscout's licence are worth knowing before you build on
+this project:
+
+  * Derivative works of Blockscout (which the patched frontend is) may be
+    created for internal use, but may not be distributed to third parties
+    without a commercial licence from Blockscout. That is why this project
+    ships a Dockerfile that builds the explorer UI locally and never publishes
+    the resulting image.
+  * Modified Blockscout files must carry a notice saying they were modified and
+    when. The files this project patches carry one; see
+    stack/explorer-overlay/upstream.patch.
+
+Read https://github.com/blockscout/frontend/blob/main/LICENSE before deploying
+anything based on it.

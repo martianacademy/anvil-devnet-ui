@@ -10,6 +10,10 @@
 #   ./devnet.sh local       point everything back at localhost
 #   ./devnet.sh fork <url>  fork a chain and reindex the explorer for it
 #
+# Add --docker to `up`, `down`, `reset` or `status` to run the control API, the
+# node and the explorer UI as containers too — then Docker is all you need
+# installed. Without it they run as host processes (Bun, pnpm and Foundry).
+#
 # Ports: 3000 explorer UI (Blockscout frontend fork) · 3010 DevNet Control API
 #        80 Blockscout backend/API via nginx · ${DEVNET_RPC_PORT} the Anvil node
 set -euo pipefail
@@ -35,8 +39,27 @@ export DEVNET_API_PORT="${DEVNET_API_PORT:-3010}"
 # every block from genesis.
 export DEVNET_FIRST_BLOCK="${DEVNET_FIRST_BLOCK:-0}"
 
+# --docker anywhere in the arguments runs everything in containers.
+DOCKER_MODE=0
+ARGS=()
+for arg in "$@"; do
+  if [ "$arg" = "--docker" ]; then DOCKER_MODE=1; else ARGS+=("$arg"); fi
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
+# Both are read by stack/docker-compose/devnet-stack.yml.
+export DEVNET_COMPOSE_DIR="$COMPOSE_DIR"
+export DEVNET_REPO_DIR="$CONTROL_DIR"
+
 compose() {
-  docker compose -f "$COMPOSE_DIR/anvil.yml" -f "$COMPOSE_DIR/devnet.override.yml" "$@"
+  local files=(-f "$COMPOSE_DIR/anvil.yml" -f "$COMPOSE_DIR/devnet.override.yml")
+  if [ "$DOCKER_MODE" = "1" ]; then
+    files+=(-f "$COMPOSE_DIR/devnet-stack.yml")
+    # Anvil runs inside the control API container, so that is the host the
+    # indexer must reach it on rather than the Docker host.
+    export DEVNET_RPC_HOST=devnet-api
+  fi
+  docker compose "${files[@]}" "$@"
 }
 
 wait_for() { # url, label, attempts
@@ -67,7 +90,35 @@ start_anvil() {
   echo "  ✓ anvil started on $DEVNET_RPC_PORT"
 }
 
+cmd_up_docker() {
+  if [ ! -d "$COMPOSE_DIR" ]; then
+    echo "🚨 Blockscout's compose files are missing — run ./stack/setup.sh --docker first." >&2
+    exit 1
+  fi
+  mkdir -p "$LOG_DIR"
+
+  echo "→ building the explorer UI (first run takes a while — it compiles Blockscout's frontend)"
+  compose build devnet-ui
+
+  echo "→ containers"
+  compose up -d
+  wait_for "http://localhost/api/v2/config/backend-version" "blockscout api" 120 || {
+    docker restart proxy >/dev/null
+    wait_for "http://localhost/api/v2/config/backend-version" "blockscout api (after proxy restart)" 40
+  }
+  wait_for "http://localhost:$DEVNET_API_PORT/api/anvil/status" "control api" 60
+  wait_for "http://localhost:3000/" "explorer ui" 90
+
+  echo
+  echo "Explorer:     http://localhost:3000"
+  echo "DevNet pages: http://localhost:3000/devnet"
+  echo "Blockscout API: http://localhost/api/v2"
+  echo "RPC:          http://127.0.0.1:$DEVNET_RPC_PORT  (started from the /devnet page)"
+}
+
 cmd_up() {
+  if [ "$DOCKER_MODE" = "1" ]; then cmd_up_docker; return; fi
+
   if [ ! -d "$COMPOSE_DIR" ] || [ ! -d "$FRONTEND_DIR" ]; then
     echo "🚨 Blockscout is not set up yet — run ./stack/setup.sh first." >&2
     exit 1
@@ -101,10 +152,12 @@ cmd_up() {
 }
 
 cmd_down() {
-  pkill -f "next dev -p $DEVNET_API_PORT" 2>/dev/null || true
-  pkill -f "next dev -p 3000" 2>/dev/null || true
+  if [ "$DOCKER_MODE" != "1" ]; then
+    pkill -f "next dev -p $DEVNET_API_PORT" 2>/dev/null || true
+    pkill -f "next dev -p 3000" 2>/dev/null || true
+  fi
   compose down --timeout 30
-  echo "Stopped the UI, the control API and the Blockscout containers (anvil left running)."
+  echo "Stopped the UI, the control API and the Blockscout containers."
 }
 
 cmd_reset() {
@@ -120,7 +173,9 @@ cmd_reset() {
   compose down -v --timeout 30
   # Blockscout keeps Postgres in bind mounts, which `down -v` does not remove.
   rm -rf "$COMPOSE_DIR/services/blockscout-db-data" "$COMPOSE_DIR/services/stats-db-data" "$COMPOSE_DIR/services/dets"
-  pkill -f "anvil --host 0.0.0.0 --port $DEVNET_RPC_PORT" 2>/dev/null || true
+  if [ "$DOCKER_MODE" != "1" ]; then
+    pkill -f "anvil --host 0.0.0.0 --port $DEVNET_RPC_PORT" 2>/dev/null || true
+  fi
   sleep 2
   cmd_up
 }

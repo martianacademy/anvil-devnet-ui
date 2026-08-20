@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Fetch Blockscout and build the explorer fork this project needs.
 #
-#   ./stack/setup.sh
+#   ./stack/setup.sh            host processes: also clones and builds the frontend
+#   ./stack/setup.sh --docker   containers only: just Blockscout's compose files
 #
 # Blockscout's code is NOT vendored here — its licence is non-transferable, so you
 # fetch it from Blockscout yourself and this script layers our DevNet pages on top:
@@ -28,10 +29,17 @@ export DEVNET_API_PORT="${DEVNET_API_PORT:-3010}"
 need() {
   command -v "$1" >/dev/null 2>&1 || { echo "🚨 $1 is required but not installed." >&2; exit 1; }
 }
+DOCKER_MODE=0
+[ "${1:-}" = "--docker" ] && DOCKER_MODE=1
+
 need git
 need docker
-need pnpm
-need anvil
+# The Docker path builds the explorer in a container and runs Anvil inside the
+# control API image, so neither toolchain has to exist on this machine.
+if [ "$DOCKER_MODE" = "0" ]; then
+  need pnpm
+  need anvil
+fi
 
 echo "→ Blockscout compose files ($BLOCKSCOUT_DIR)"
 if [ ! -d "$BLOCKSCOUT_DIR/.git" ]; then
@@ -50,6 +58,15 @@ if [ ! -d "$FRONTEND_DIR/.git" ]; then
   git -C "$FRONTEND_DIR" tag -f devnet-fork-base >/dev/null
 else
   echo "  ✓ already cloned"
+fi
+
+if [ "$DOCKER_MODE" = "1" ]; then
+  cp "$REPO/stack/docker-compose/devnet-stack.yml" "$BLOCKSCOUT_DIR/docker-compose/devnet-stack.yml"
+  echo "  ✓ devnet-stack.yml in place"
+  echo
+  echo "Ready. Start everything with:"
+  echo "  ./devnet.sh up --docker"
+  exit 0
 fi
 
 echo "→ DevNet overlay"

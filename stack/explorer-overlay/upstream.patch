@@ -1,8 +1,14 @@
 diff --git a/src/services/mixpanel/get-page-type.ts b/src/services/mixpanel/get-page-type.ts
-index 5f3c6d7..aa254ec 100644
+index 5f3c6d7..db45aaa 100644
 --- a/src/services/mixpanel/get-page-type.ts
 +++ b/src/services/mixpanel/get-page-type.ts
-@@ -60,6 +60,13 @@ export const PAGE_TYPE_DICT: Record<Route['pathname'], string> = {
+@@ -1,4 +1,5 @@
+ // SPDX-License-Identifier: LicenseRef-Blockscout
++// Modified by anvil-devnet-ui on 2026-08-20 to add the DevNet pages and transaction tabs.
+ 
+ import type { Route } from 'nextjs-routes';
+ 
+@@ -60,6 +61,13 @@ export const PAGE_TYPE_DICT: Record<Route['pathname'], string> = {
    '/epochs': 'Epochs',
    '/epochs/[number]': 'Epoch details',
    '/gas-tracker': 'Gas tracker',
@@ -17,10 +23,16 @@ index 5f3c6d7..aa254ec 100644
    '/advanced-filter': 'Advanced filter',
    '/pools': 'DEX pools',
 diff --git a/src/shell/metadata/templates/index.ts b/src/shell/metadata/templates/index.ts
-index 52f60a6..e71f34f 100644
+index 52f60a6..ca4a3bd 100644
 --- a/src/shell/metadata/templates/index.ts
 +++ b/src/shell/metadata/templates/index.ts
-@@ -561,6 +561,78 @@ export const TEMPLATE_MAP: Record<Route['pathname'], RouteTemplateRecord> = {
+@@ -1,4 +1,5 @@
+ // SPDX-License-Identifier: LicenseRef-Blockscout
++// Modified by anvil-devnet-ui on 2026-08-20 to add the DevNet pages and transaction tabs.
+ 
+ /* eslint-disable max-len */
+ 
+@@ -561,6 +562,78 @@ export const TEMPLATE_MAP: Record<Route['pathname'], RouteTemplateRecord> = {
        },
      },
    },
@@ -100,10 +112,16 @@ index 52f60a6..e71f34f 100644
      metadata: {
        title: {
 diff --git a/src/shell/navigation/useNavItems.tsx b/src/shell/navigation/useNavItems.tsx
-index 117f188..a7875cb 100644
+index 117f188..44eaf1c 100644
 --- a/src/shell/navigation/useNavItems.tsx
 +++ b/src/shell/navigation/useNavItems.tsx
-@@ -359,7 +359,54 @@ export default function useNavItems(): ReturnType {
+@@ -1,4 +1,5 @@
+ // SPDX-License-Identifier: LicenseRef-Blockscout
++// Modified by anvil-devnet-ui on 2026-08-20 to add the DevNet pages and transaction tabs.
+ 
+ import { useRouter } from 'next/router';
+ import React from 'react';
+@@ -359,7 +360,54 @@ export default function useNavItems(): ReturnType {
        ...config.shell.navigation.otherLinks,
      ].filter(Boolean);
  
@@ -159,10 +177,16 @@ index 117f188..a7875cb 100644
          text: 'Blockchain',
          icon: 'navigation/blockchain',
 diff --git a/src/slices/search/components/search-bar/SearchBarInput.tsx b/src/slices/search/components/search-bar/SearchBarInput.tsx
-index efc40f0..a0912ad 100644
+index efc40f0..3551491 100644
 --- a/src/slices/search/components/search-bar/SearchBarInput.tsx
 +++ b/src/slices/search/components/search-bar/SearchBarInput.tsx
-@@ -132,7 +132,7 @@ const SearchBarInput = (
+@@ -1,4 +1,5 @@
+ // SPDX-License-Identifier: LicenseRef-Blockscout
++// Modified by anvil-devnet-ui on 2026-08-20: keep the input controlled from its first render.
+ 
+ import type { HTMLChakraProps } from '@chakra-ui/react';
+ import { chakra, Center } from '@chakra-ui/react';
+@@ -132,7 +133,7 @@ const SearchBarInput = (
          <Input
            size={{ base: isHeroBanner ? 'md' : 'sm', lg: 'md' }}
            placeholder={ getPlaceholder() }
@@ -172,17 +196,18 @@ index efc40f0..a0912ad 100644
            onFocus={ onFocus }
            tabIndex={ readOnly ? -1 : 0 }
 diff --git a/src/slices/tx/pages/details/Transaction.tsx b/src/slices/tx/pages/details/Transaction.tsx
-index 2a14a6d..bb9bf08 100644
+index 2a14a6d..364b774 100644
 --- a/src/slices/tx/pages/details/Transaction.tsx
 +++ b/src/slices/tx/pages/details/Transaction.tsx
-@@ -1,5 +1,6 @@
+@@ -1,5 +1,7 @@
  // SPDX-License-Identifier: LicenseRef-Blockscout
++// Modified by anvil-devnet-ui on 2026-08-20 to add the DevNet pages and transaction tabs.
  
 +import { Flex } from '@chakra-ui/react';
  import { useRouter } from 'next/router';
  import React from 'react';
  
-@@ -18,6 +19,10 @@ import TextAd from 'src/features/ads/text/components/TextAd';
+@@ -18,6 +20,10 @@ import TextAd from 'src/features/ads/text/components/TextAd';
  import TxDetailsWrapped from 'src/features/chain-variants/suave/pages/tx/TxDetailsWrapped';
  import { isPublicClientAvailable } from 'src/features/connect-wallet/utils/public-client';
  import TxBlobs from 'src/features/data-availability/pages/tx/TxBlobs';
@@ -193,7 +218,7 @@ index 2a14a6d..bb9bf08 100644
  import TxFheOperations from 'src/features/fhe-operations/pages/tx/TxFheOperations';
  import TxAuthorizations from 'src/features/tx-authorization/pages/tx/TxAuthorizations';
  import TxAssetFlows from 'src/features/tx-interpretation/noves/pages/tx-asset-flows/TxAssetFlows';
-@@ -87,6 +92,10 @@ const TransactionPageContent = () => {
+@@ -87,6 +93,10 @@ const TransactionPageContent = () => {
        { id: 'logs', title: 'Logs', component: <TxLogs txQuery={ txQuery }/> },
        { id: 'state', title: 'State', component: <TxState txQuery={ txQuery }/> },
        { id: 'raw_trace', title: 'Raw trace', component: <TxRawTrace txQuery={ txQuery }/> },
@@ -204,7 +229,7 @@ index 2a14a6d..bb9bf08 100644
        txQuery.data?.fhe_operations_count && txQuery.data.fhe_operations_count > 0 ?
          { id: 'fhe_operations', title: 'FHE operations', component: <TxFheOperations txQuery={ txQuery }/> } :
          undefined,
-@@ -120,10 +129,14 @@ const TransactionPageContent = () => {
+@@ -120,10 +130,14 @@ const TransactionPageContent = () => {
    const isTabsLoading = txQuery.isPlaceholderData && !txQuery.errorUpdateCount;
  
    const tags = (

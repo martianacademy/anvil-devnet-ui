@@ -1,0 +1,71 @@
+# Publishes the DevNet Control API image.
+#
+# Only this repository's code goes into it. The explorer UI image is deliberately
+# NOT published: it is a Derivative Work of Blockscout, whose licence forbids
+# distributing one without a commercial agreement. Users build it locally
+# (stack/Dockerfile.explorer, wired up by `./devnet.sh up --docker`).
+name: Publish control API image
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository_owner }}/anvil-devnet-api
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          # Apple Silicon is a first-class target here, not an afterthought.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke the published image
+        run: |
+          docker run -d --name devnet-api-check \
+            -p 3010:3010 -e DEVNET_RPC_PORT=8555 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE }}:latest
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:3010/api/anvil/status >/dev/null; then
+              echo "control api answered"
+              docker rm -f devnet-api-check
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs devnet-api-check
+          exit 1

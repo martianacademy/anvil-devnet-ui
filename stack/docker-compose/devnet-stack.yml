@@ -1,0 +1,72 @@
+# Runs the DevNet Control API and the explorer UI as containers alongside
+# Blockscout, so Docker is the only thing you need installed.
+#
+#   ./devnet.sh up --docker
+#
+# Layered on top of Blockscout's anvil.yml and devnet.override.yml. The control
+# API image comes from a registry; the explorer UI is built here and must stay
+# local — it is a Derivative Work of Blockscout (see stack/Dockerfile.explorer).
+services:
+  devnet-api:
+    image: ${DEVNET_API_IMAGE:-ghcr.io/martianacademy/anvil-devnet-api:latest}
+    container_name: devnet-api
+    restart: unless-stopped
+    ports:
+      - "${DEVNET_API_PORT:-3010}:3010"
+      # Anvil runs inside this container, so the RPC is published from here.
+      - "${DEVNET_RPC_PORT:-8546}:${DEVNET_RPC_PORT:-8546}"
+    environment:
+      DEVNET_API_PORT: "3010"
+      DEVNET_RPC_PORT: "${DEVNET_RPC_PORT:-8546}"
+      DEVNET_CHAIN_ID: "${DEVNET_CHAIN_ID:-31337}"
+      DEVNET_READONLY: "${DEVNET_READONLY:-}"
+      # The node lives in this container, so that is where the indexer must look.
+      DEVNET_RPC_HOST: devnet-api
+      # Bind-mounted below at the identical path: `docker compose` runs against
+      # the host's daemon, which resolves the relative bind mounts in Blockscout's
+      # compose file itself. Same path in both places or it writes to the wrong one.
+      DEVNET_COMPOSE_DIR: "${DEVNET_COMPOSE_DIR}"
+      ETHERSCAN_API_KEY: "${ETHERSCAN_API_KEY:-}"
+    volumes:
+      - devnet-data:/data
+      # Lets the explorer auto-sync reconfigure this very stack.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "${DEVNET_COMPOSE_DIR}:${DEVNET_COMPOSE_DIR}"
+
+  devnet-ui:
+    build:
+      context: "${DEVNET_REPO_DIR}"
+      dockerfile: stack/Dockerfile.explorer
+      args:
+        # Empty means "use the commit pinned in the Dockerfile", which is the one
+        # upstream.patch was generated against.
+        BLOCKSCOUT_FRONTEND_REF: "${BLOCKSCOUT_FRONTEND_REF:-62343f1f36185eb350bebf13866d16b46fb13775}"
+    image: anvil-devnet-ui:local
+    container_name: devnet-ui
+    restart: unless-stopped
+    depends_on:
+      - devnet-api
+    ports:
+      - "3000:3000"
+    environment:
+      # Read by the browser, so these must be addresses the browser can reach.
+      NEXT_PUBLIC_APP_PROTOCOL: http
+      NEXT_PUBLIC_APP_HOST: "${DEVNET_PUBLIC_HOST:-localhost}"
+      NEXT_PUBLIC_APP_PORT: "3000"
+      NEXT_PUBLIC_API_PROTOCOL: http
+      NEXT_PUBLIC_API_HOST: "${DEVNET_PUBLIC_HOST:-localhost}"
+      NEXT_PUBLIC_API_PORT: "80"
+      NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: ws
+      NEXT_PUBLIC_NETWORK_ID: "${DEVNET_CHAIN_ID:-31337}"
+      NEXT_PUBLIC_NETWORK_NAME: Anvil DevNet
+      NEXT_PUBLIC_NETWORK_SHORT_NAME: DevNet
+      NEXT_PUBLIC_NETWORK_CURRENCY_NAME: Ether
+      NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: ETH
+      NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: "18"
+      NEXT_PUBLIC_NETWORK_RPC_URL: "http://${DEVNET_PUBLIC_HOST:-localhost}:${DEVNET_RPC_PORT:-8546}"
+      NEXT_PUBLIC_IS_ACCOUNT_SUPPORTED: "false"
+      # Server-side only: the UI proxies /api/devnet/* over the compose network.
+      DEVNET_API_URL: http://devnet-api:3010
+
+volumes:
+  devnet-data:

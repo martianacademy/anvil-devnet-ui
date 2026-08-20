@@ -1,0 +1,84 @@
+# The explorer UI: Blockscout's frontend with this project's DevNet pages.
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  THIS IMAGE MUST NOT BE PUBLISHED.                                      │
+# │                                                                         │
+# │  It contains a Derivative Work of Blockscout. Blockscout's licence      │
+# │  (LicenseRef-Blockscout §4) permits creating one for your own use, and  │
+# │  forbids distributing it to third parties without a commercial licence  │
+# │  from Blockscout. Build it locally; do not push it to a registry.       │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# Building here rather than on the host is what removes pnpm and Node from the
+# requirements — Docker is enough.
+#
+# Build from the repository root:
+#   docker build -f stack/Dockerfile.explorer -t anvil-devnet-ui:local .
+
+# ── fetch and patch Blockscout's frontend ────────────────────────────────────
+FROM node:22-slim AS source
+WORKDIR /src
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pinned, because upstream.patch is a diff against this exact tree — tracking
+# `main` would break the build the first time Blockscout touched a patched file.
+# Bump deliberately, then regenerate the patch against the new commit.
+ARG BLOCKSCOUT_FRONTEND_REF=62343f1f36185eb350bebf13866d16b46fb13775
+RUN git init -q . \
+    && git remote add origin https://github.com/blockscout/frontend.git \
+    && git fetch --depth 1 origin "${BLOCKSCOUT_FRONTEND_REF}" \
+    && git checkout -q FETCH_HEAD \
+    # `pnpm build` reads the version from git describe, which a shallow clone
+    # cannot answer without a tag.
+    && git tag devnet-fork-base
+
+# Our own code first, then the handful of upstream edits.
+COPY stack/explorer-overlay/src/. ./src/
+COPY stack/explorer-overlay/upstream.patch /tmp/upstream.patch
+RUN git apply /tmp/upstream.patch && rm /tmp/upstream.patch
+
+# ── install and build ────────────────────────────────────────────────────────
+FROM node:22-slim AS build
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable
+
+COPY --from=source /src ./
+
+# --ignore-scripts: a transitive WebRTC dependency compiles native code and needs
+# a toolchain it never uses at runtime.
+RUN pnpm install --ignore-scripts --frozen-lockfile
+
+ENV NEXT_TELEMETRY_DISABLED=1
+# Blockscout reads its instance config at runtime from /node-api/config, so the
+# build needs only enough to satisfy the env validator.
+ARG NEXT_PUBLIC_APP_HOST=localhost
+ARG NEXT_PUBLIC_APP_PORT=3000
+RUN pnpm run build
+
+# ── runtime ──────────────────────────────────────────────────────────────────
+FROM node:22-slim AS runtime
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000
+
+COPY --from=build /app ./
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=10 \
+  CMD curl -fsS http://127.0.0.1:3000/ || exit 1
+
+CMD ["pnpm", "start"]

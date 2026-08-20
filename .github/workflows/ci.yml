@@ -34,3 +34,11 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      # The unit tests cover the pure layers; every bug that has actually shipped
+      # lived in the seams. This runs a real Anvil and the built server.
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Smoke test
+        run: node --experimental-strip-types scripts/smoke.ts

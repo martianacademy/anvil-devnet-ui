@@ -6,6 +6,9 @@ import type { NextConfig } from "next";
  * (Foundry, Hardhat, dApps) point at it directly.
  */
 const nextConfig: NextConfig = {
+  // Lets the Docker image ship a self-contained server instead of node_modules.
+  output: "standalone",
+
   async headers() {
     return [
       {
