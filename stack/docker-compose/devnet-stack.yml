@@ -9,6 +9,12 @@
 services:
   devnet-api:
     image: ${DEVNET_API_IMAGE:-ghcr.io/martianacademy/anvil-devnet-api:latest}
+    # Compose builds this only when the image is not already present, so a
+    # `docker compose pull devnet-api` uses the published one and everyone else
+    # (and anyone working on this repo) gets a local build without extra flags.
+    build:
+      context: "${DEVNET_REPO_DIR}"
+      dockerfile: Dockerfile
     container_name: devnet-api
     restart: unless-stopped
     ports:
