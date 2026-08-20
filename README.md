@@ -2,8 +2,9 @@
 
 A complete local Ethereum development environment: run [Anvil](https://book.getfoundry.sh/anvil/),
 index it with [Blockscout](https://github.com/blockscout/blockscout), and drive the whole thing from
-one UI that also does the things an explorer cannot — start and stop the node, fork mainnet, patch
-balances and storage, simulate calls, and step through a transaction opcode by opcode.
+one UI that also does the things an explorer cannot — start and stop the node, put working contract
+code at any address, patch balances and storage, simulate calls, and step through a transaction
+opcode by opcode.
 
 Think Tenderly, but running entirely on your machine, with your data.
 
@@ -21,7 +22,7 @@ Think Tenderly, but running entirely on your machine, with your data.
    Postgres · Redis · stats                Next.js · node:sqlite
    sig-provider · visualizer                        │ spawns and drives
                │                                    ▼
-               └───────────── indexes ───────►  anvil :8546
+               └───────────── indexes ───────►  anvil (any port)
 ```
 
 **This repository is the DevNet Control API** — the headless service that owns the Anvil process,
@@ -38,6 +39,8 @@ is Blockscout's frontend with a set of DevNet pages layered on top by `stack/set
 | **Debugging a failing transaction** | The revert banner decodes `Error(string)`, `Panic(code)` and custom errors, and tells you the exact frame, program counter and step where it happened — then hands you a step debugger positioned there. |
 | **Optimising gas** | The gas profiler splits a transaction into intrinsic vs execution cost, then breaks execution down by category, opcode, call frame and the individual most expensive steps. |
 | **Working against a mainnet fork** | Fork any chain by URL, pin the block automatically, then give your test wallet real ETH and ERC-20 balances with one request — no whale account, no faucet. |
+| **Testing against a mainnet token, without a fork** | Run a plain chain on mainnet's chain id and install a working ERC-20 at the token's real address. Your contracts see the address they expect; your explorer stays free of upstream history. |
+| **Working with a teammate** | One command serves the explorer and the RPC to everyone on your Wi-Fi, and a read-only switch lets you share it without handing over control of the chain. |
 | **A protocol or DeFi engineer** | Time travel, interval mining, impersonation and EVM snapshots let you reproduce time-locked, multi-block and permissioned flows deterministically. |
 | **A security researcher / auditor** | Storage-slot writes are shown before → after with mapping keys resolved back to `mapping @ slot N [0xaddr…]`, so you can see exactly which balance or role changed. |
 | **A dapp frontend developer** | A local explorer to link users to, plus an Etherscan-compatible API so tools that expect one keep working against your devnet. |
@@ -70,11 +73,25 @@ is Blockscout's frontend with a set of DevNet pages layered on top by `stack/set
 
 | Page | What you can do |
 | --- | --- |
-| `/devnet` | Start, stop and reset the node; set chain id, port, block time, accounts, balance; fork any chain by URL with the block pinned automatically; live process logs |
+| `/devnet` | Start, stop and reset the node; set chain id, port, block time, accounts, balance; fork any chain by URL with the block pinned automatically; live process logs. While a node runs, every field shows what that node is *actually* running with, read off the wire. A process list stops any stray Anvil holding a port, including ones this app did not start. |
 | `/devnet/evm` | Mine on demand, interval mining, automine toggle, time travel by preset or seconds, account impersonation, EVM snapshots and revert |
-| `/devnet/patches` | Set native ETH balances, set ERC-20 balances (slot auto-detected, minimal ERC-20 injected when the address has no code), read and write raw storage slots |
+| `/devnet/patches` | Install contract code at any address — the built-in ERC-20, your own creation bytecode, or raw runtime bytecode; set native ETH and ERC-20 balances (slot auto-detected); read and write raw storage slots |
 | `/devnet/simulate` | Dry-run any call inside an EVM snapshot that is always reverted — return data, gas estimate, storage writes and decoded events, with zero effect on chain state |
 | `/devnet/projects` | Create, start, stop and delete isolated devnets, each with its own port, chain, fork settings and history |
+
+### Sharing and safety
+
+- **`./devnet.sh expose`** serves the explorer and the RPC to everyone on your Wi-Fi — the URLs
+  compiled into the explorer bundle are rewritten to your LAN address, which is the part that
+  otherwise breaks
+- **`DEVNET_READONLY=1`** keeps the explorer, traces, gas profiler and storage diff fully usable
+  while refusing node control, state patches and every state-changing RPC method
+
+### A self-configuring explorer
+
+- Change the chain id or the port, restart Anvil, start a node on a port nobody configured —
+  Blockscout notices within about ten seconds, wipes its index and reindexes the chain that exists
+- No compose files to edit, and no chance of the explorer serving blocks from a chain you deleted
 
 ### API
 
@@ -110,8 +127,8 @@ give it a couple of minutes; later starts take seconds.
 
 `stack/setup.sh` clones `blockscout/blockscout` (sparse — just the compose files) and
 `blockscout/frontend` next to this repository, copies the DevNet pages from `stack/explorer-overlay`
-into the frontend, applies a small patch to four upstream files (navigation, page metadata, analytics
-page types, transaction tabs) and installs dependencies. Blockscout's own code is never vendored
+into the frontend, applies a small patch to five upstream files (navigation, page metadata, analytics
+page types, transaction tabs, one search-input fix) and installs dependencies. Blockscout's own code is never vendored
 here — see [Licence and attribution](#licence-and-attribution).
 
 ### Everyday commands
@@ -124,6 +141,7 @@ here — see [Licence and attribution](#licence-and-attribution).
 ./devnet.sh reset       # wipe the index and the devnet state, then start fresh
 ./devnet.sh expose      # serve the UI and RPC to your local network
 ./devnet.sh local       # point everything back at localhost
+./devnet.sh fork <url>  # reset into a fork, with the indexer pinned to the fork height
 ```
 
 `reset` matters: Blockscout indexes by block height, so when Anvil restarts at block 0 the indexer
@@ -139,7 +157,7 @@ volumes and reindexes from scratch.
 | http://localhost/api/v2 | Blockscout REST API |
 | http://localhost:3010/api | DevNet Control API (this repo) |
 | http://localhost:3010/api/explorer | Etherscan-compatible read API |
-| http://127.0.0.1:8546 | The devnet JSON-RPC endpoint |
+| http://127.0.0.1:8546 | The devnet JSON-RPC endpoint (whatever port the node runs on) |
 
 ---
 
@@ -197,9 +215,6 @@ The explorer then shows it as Tether USD (USDT) and indexes its transfers like a
 Forking pulls the upstream chain's blocks and history into your explorer, which is rarely what you
 want on a devnet — and public RPCs are unreliable enough that Anvil can panic mid-mine against them.
 
-Forking pulls the upstream chain's blocks and history into your explorer, which is rarely what you
-want on a devnet — and public RPCs are unreliable enough that Anvil can panic mid-mine against them.
-
 ---
 
 ## Sharing it on your network
@@ -219,7 +234,7 @@ rewrites them to your address and restarts the UI.
 | Share this | For |
 | --- | --- |
 | `http://<your-ip>:3000` | The explorer |
-| `http://<your-ip>:8546` | The RPC endpoint (add as a custom network, chain id 31337) |
+| `http://<your-ip>:8546` | The RPC endpoint (add as a custom network, using your chain id) |
 | `http://<your-ip>/api/v2` | Blockscout's REST API |
 
 `./devnet.sh local` puts it back. Re-run `expose` if your IP changes — a laptop that switches
@@ -260,6 +275,8 @@ macOS may ask to allow incoming connections the first time you expose the stack.
 | `DEVNET_WORKSPACE` | parent of this repo | Where `blockscout/` and `blockscout-frontend/` are cloned |
 | `DEVNET_DB_PATH` | `./devnet.db` | Move the SQLite file elsewhere |
 | `DEVNET_READONLY` | unset | `1` disables every state-changing route and RPC method |
+| `DEVNET_EXPLORER_AUTOSYNC` | `1` | `0` stops the explorer from following the node; manage the stack yourself |
+| `DEVNET_FIRST_BLOCK` | `0` | Height the indexer starts from — `devnet.sh fork` sets it to the fork block |
 | `ETHERSCAN_API_KEY` | — | Enables ABI auto-fetch from Etherscan V2 (multichain). Sourcify needs no key |
 
 Explorer UI settings (network name, currency, API host) live in `blockscout-frontend/.env.local`,
@@ -279,12 +296,14 @@ bun run test            # node --test (unit tests in tests/)
 bun run check           # typecheck + lint + test
 bun run db:reset        # delete devnet.db and its WAL sidecars
 bun run db:reset --all  # …and the persisted Anvil state dumps + logs
+bun run build:mock-erc20  # recompile contracts/MockERC20.sol into lib/mockErc20.ts (needs solc)
 ```
 
 Tests run on Node's built-in runner with native TypeScript support — no build step and no test
 framework dependency. They cover the pure layers: formatting, input validation, indexer mapping,
-Anvil argument construction, storage-slot derivation, the SQLite schema and migrations, and project
-resolution.
+Anvil argument construction, storage-slot derivation, the SQLite schema and migrations, project
+resolution, block-time inference from block timestamps, and the ERC-20 constructor encoding the code
+patcher installs.
 
 ---
 
@@ -292,9 +311,10 @@ resolution.
 
 **Blockscout does the reading.** Its official `anvil.yml` preset points the indexer at
 `host.docker.internal`, so the devnet must listen on `0.0.0.0` — the control API always starts Anvil
-that way. `stack/docker-compose/devnet.override.yml` moves it to port 8546 (8545 is usually taken by
-a hand-started node bound to localhost), disables Ecto's SSL because the bundled Postgres does not
-speak TLS, and sets the chain id and frontend network config.
+that way. `stack/docker-compose/devnet.override.yml` sets the RPC port and chain id (rewritten whenever the
+explorer follows a node), disables Ecto's SSL because the bundled Postgres does not speak TLS, and
+turns off Blockscout's API rate limit — inside Docker every container and every browser reaches the
+backend from the same gateway address, so they share one bucket and a fast-mining chain drains it.
 
 **The control API does the writing.** Blockscout is read-only, and its Anvil preset disables the
 internal-transaction fetcher, so call traces, opcode traces, state patching and process control all
@@ -320,6 +340,17 @@ default. That is what lets several devnets run side by side without any route ha
   turns an opaque storage hash into a readable label.
 - **Blocks are keyed by `(chain_id, project_id, number)`**, so two projects on the same chain id do
   not overwrite each other's history.
+- **Code is installed by simulating a deployment.** `anvil_setCode` takes runtime bytecode, so it
+  never runs a constructor — a token installed that way has no name, no symbol and no supply. The
+  patcher runs the creation bytecode inside `debug_traceCall` instead, which executes the constructor
+  without mining anything, and the prestate tracer reports the code it returned plus every slot it
+  wrote. Both are then written to the target address. The one thing this cannot preserve is an
+  immutable holding `address(this)`, which records the simulated address.
+- **A node's settings are read, never remembered.** `anvil_nodeInfo` gives the chain id, base fee and
+  fork config, `eth_accounts` the account count, `eth_getBalance` the funding. Block time is the
+  exception — Anvil does not expose it, so it is inferred from the gaps between recent blocks. Equal
+  gaps mean `--block-time`; anything else is on-demand mining and the field stays blank rather than
+  inventing a number.
 - **Persistence uses `node:sqlite`.** The project used to depend on `better-sqlite3`, whose native
   binding breaks whenever Node's ABI changes and needs a compiler to recover. The built-in module has
   nothing to build.
@@ -340,11 +371,12 @@ Scope any request to a specific project with `?projectId=…` or the `x-project-
 | --- | --- | --- | --- |
 | `POST` | `/api/anvil/start` | `{ chainId, port, blockTime, accounts, balance, baseFee, forkUrl?, forkBlockNumber? }` | Spawn Anvil; the fork block is pinned automatically |
 | `POST` | `/api/anvil/stop` | — | SIGTERM, then SIGKILL after 3 s, then free the port |
-| `GET` | `/api/anvil/status` | — | `{ running, managed, pid, port, chainId, blockNumber, gasPrice, uptime, lastError, config }` |
+| `GET` | `/api/anvil/status` | — | `{ running, managed, pid, port, chainId, blockNumber, gasPrice, uptime, lastError, config, configSource, explorer }` — `config` is read off the running node, `explorer` reports the chain and port Blockscout is indexing plus any sync in progress |
 | `GET` | `/api/anvil/logs` | `?limit=200` | Recent process output, the log path and the last start error |
 | `GET` | `/api/anvil/processes` | — | Every Anvil listening on the machine, with pid, port, bind address and whether this app started it |
 | `DELETE` | `/api/anvil/processes` | `{ pid }`, `{ port }` or `{ all: true }` | Stop a stray node holding a port (never touches non-Anvil processes) |
 | `POST` | `/api/anvil/reset` | `{ chainId? }` | Stop the node, clear indexed rows and delete the persisted state |
+| `POST` | `/api/anvil/explorer-sync` | — | Point Blockscout at the node running right now, without waiting for the watcher |
 
 ```bash
 # Local chain
@@ -472,10 +504,12 @@ anvil-devnet-ui/
 │   ├── page.tsx                  # API signpost — the UI lives in the explorer
 │   └── api/                      # every route above
 ├── lib/
-│   ├── db.ts                     # schema + migrations (WAL, 11 tables)
+│   ├── db.ts                     # schema + migrations (WAL, 14 tables)
 │   ├── sqlite.ts                 # node:sqlite adapter with a statement cache
 │   ├── anvilProcess.ts           # spawn / stop / orphan cleanup
 │   ├── activeProject.ts          # which node does this request target?
+│   ├── nodeObserver.ts           # read a running node's real settings over RPC
+│   ├── explorerStack.ts          # reconfigure and reindex Blockscout for the live node
 │   ├── indexer.ts                # RPC block/tx → DB row mapping
 │   ├── txStore.ts                # block / tx / trace persistence
 │   ├── abiRegistry.ts            # ABI storage, decoding, Sourcify + Etherscan V2
@@ -486,6 +520,7 @@ anvil-devnet-ui/
 │   ├── validate.ts / route.ts    # input validation and uniform error handling
 │   └── rpc.ts                    # viem client + rpc()/rpcBatch()
 ├── proxy.ts                      # read-only guard (DEVNET_READONLY)
+├── instrumentation.ts            # the watcher that keeps the explorer on the live node
 ├── contracts/
 │   └── MockERC20.sol             # the token /api/patches/code installs (bun run build:mock-erc20)
 ├── stack/
@@ -493,7 +528,7 @@ anvil-devnet-ui/
 │   ├── docker-compose/           # devnet.override.yml for Blockscout's anvil preset
 │   └── explorer-overlay/         # the DevNet UI (our code) + upstream.patch
 ├── tests/                        # node --test unit tests
-├── scripts/resetDb.ts
+├── scripts/                      # resetDb.ts, buildMockErc20.ts
 └── devnet.sh                     # start / stop / reset the whole stack
 ```
 
