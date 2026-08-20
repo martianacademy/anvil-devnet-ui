@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Anvil DevNet + Blockscout — one script to run the whole stack.
 #
-#   ./devnet.sh up        start Blockscout (docker), the control API and the explorer UI
-#   ./devnet.sh down      stop the UI, the control API and the Blockscout containers
-#   ./devnet.sh reset     wipe the indexer database and reindex from a fresh chain
-#   ./devnet.sh status    show what is running
-#   ./devnet.sh logs      tail the control API + explorer logs
+#   ./devnet.sh up          start Blockscout (docker), the control API and the explorer UI
+#   ./devnet.sh down        stop the UI, the control API and the Blockscout containers
+#   ./devnet.sh reset       wipe the indexer database and reindex from a fresh chain
+#   ./devnet.sh status      show what is running
+#   ./devnet.sh logs        tail the control API + explorer logs
+#   ./devnet.sh expose [ip] serve the UI and RPC to your local network
+#   ./devnet.sh local       point everything back at localhost
 #
 # Ports: 3000 explorer UI (Blockscout frontend fork) · 3010 DevNet Control API
 #        80 Blockscout backend/API via nginx · ${DEVNET_RPC_PORT} the Anvil node
@@ -78,7 +80,7 @@ cmd_up() {
     wait_for "http://localhost/api/v2/config/backend-version" "blockscout api (after proxy restart)" 40
   }
 
-  echo "→ devnet control api (port $DEVNET_API_PORT)"
+  echo "→ devnet control api (port $DEVNET_API_PORT)${DEVNET_READONLY:+ · read-only}"
   (cd "$CONTROL_DIR" && DEVNET_API_PORT="$DEVNET_API_PORT" DEVNET_RPC_PORT="$DEVNET_RPC_PORT" \
     bun dev > "$LOG_DIR/control-api.log" 2>&1 &)
   wait_for "http://localhost:$DEVNET_API_PORT/api/anvil/status" "control api" 40
@@ -136,11 +138,81 @@ cmd_logs() {
   tail -f "$LOG_DIR"/*.log
 }
 
+detect_lan_ip() {
+  local ip
+  for iface in en0 en1 en2 eth0; do
+    ip="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"
+    [ -n "$ip" ] && { echo "$ip"; return; }
+  done
+  # Linux fallback
+  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  echo "$ip"
+}
+
+# The explorer bakes NEXT_PUBLIC_* values into the bundle, so a visitor's browser
+# uses whatever host is written here — "localhost" would resolve to their machine.
+set_public_host() {
+  local host="$1"
+  local env_file="$FRONTEND_DIR/.env.local"
+
+  [ -f "$env_file" ] || { echo "🚨 $env_file not found — run ./stack/setup.sh first." >&2; exit 1; }
+
+  local tmp
+  tmp="$(mktemp)"
+  sed -E \
+    -e "s|^NEXT_PUBLIC_APP_HOST=.*|NEXT_PUBLIC_APP_HOST=${host}|" \
+    -e "s|^NEXT_PUBLIC_API_HOST=.*|NEXT_PUBLIC_API_HOST=${host}|" \
+    -e "s|^NEXT_PUBLIC_STATS_API_HOST=.*|NEXT_PUBLIC_STATS_API_HOST=http://${host}:8080|" \
+    -e "s|^NEXT_PUBLIC_VISUALIZE_API_HOST=.*|NEXT_PUBLIC_VISUALIZE_API_HOST=http://${host}:8081|" \
+    -e "s|^NEXT_PUBLIC_NETWORK_RPC_URL=.*|NEXT_PUBLIC_NETWORK_RPC_URL=http://${host}:${DEVNET_RPC_PORT}|" \
+    "$env_file" > "$tmp"
+  mv "$tmp" "$env_file"
+}
+
+restart_frontend() {
+  pkill -f "next dev -p 3000" 2>/dev/null || true
+  sleep 1
+  ( cd "$FRONTEND_DIR" && pnpm dev:local > "$LOG_DIR/frontend.log" 2>&1 & )
+  wait_for "http://localhost:3000/" "explorer ui" 80
+}
+
+cmd_expose() {
+  local host="${1:-$(detect_lan_ip)}"
+  [ -n "$host" ] || { echo "🚨 Could not detect a LAN address — pass one: ./devnet.sh expose 192.168.1.42" >&2; exit 1; }
+
+  mkdir -p "$LOG_DIR"
+  set_public_host "$host"
+  echo "→ rebuilding the explorer for http://$host:3000"
+  restart_frontend
+
+  echo
+  echo "Share these on your network:"
+  echo "  Explorer:  http://$host:3000"
+  echo "  RPC:       http://$host:$DEVNET_RPC_PORT     (chain id $DEVNET_CHAIN_ID)"
+  echo "  API:       http://$host/api/v2"
+  echo
+  echo "⚠️  Anyone who can reach these can also patch balances, write storage and"
+  echo "    stop your node — the control API has no authentication."
+  echo "    For a shared network, restart it read-only:"
+  echo "      ./devnet.sh down && DEVNET_READONLY=1 ./devnet.sh up && ./devnet.sh expose $host"
+  echo "    macOS may prompt to allow incoming connections the first time."
+}
+
+cmd_local() {
+  mkdir -p "$LOG_DIR"
+  set_public_host localhost
+  echo "→ rebuilding the explorer for http://localhost:3000"
+  restart_frontend
+  echo "  ✓ back to localhost only"
+}
+
 case "${1:-up}" in
   up) cmd_up ;;
   down) cmd_down ;;
   reset) cmd_reset ;;
   status) cmd_status ;;
   logs) cmd_logs ;;
+  expose) cmd_expose "${2:-}" ;;
+  local) cmd_local ;;
   *) sed -n '2,12p' "$0"; exit 1 ;;
 esac

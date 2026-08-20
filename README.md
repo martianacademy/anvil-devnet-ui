@@ -117,11 +117,13 @@ here — see [Licence and attribution](#licence-and-attribution).
 ### Everyday commands
 
 ```bash
-./devnet.sh up       # start everything (safe to run when parts are already up)
-./devnet.sh status   # what is running
-./devnet.sh logs     # tail anvil + control API + UI logs
-./devnet.sh down     # stop the UI, the control API and the containers
-./devnet.sh reset    # wipe the index and the devnet state, then start fresh
+./devnet.sh up          # start everything (safe to run when parts are already up)
+./devnet.sh status      # what is running
+./devnet.sh logs        # tail anvil + control API + UI logs
+./devnet.sh down        # stop the UI, the control API and the containers
+./devnet.sh reset       # wipe the index and the devnet state, then start fresh
+./devnet.sh expose      # serve the UI and RPC to your local network
+./devnet.sh local       # point everything back at localhost
 ```
 
 `reset` matters: Blockscout indexes by block height, so when Anvil restarts at block 0 the indexer
@@ -141,6 +143,50 @@ volumes and reindexes from scratch.
 
 ---
 
+## Sharing it on your network
+
+Teammates on the same Wi-Fi can point MetaMask at your chain and browse it in the explorer:
+
+```bash
+./devnet.sh expose              # auto-detects your LAN address
+./devnet.sh expose 192.168.1.42 # or name it yourself
+```
+
+Every service already listens on all interfaces; what `expose` changes is the explorer's baked-in
+`NEXT_PUBLIC_*` URLs. They are compiled into the bundle a visitor's browser runs, so while they say
+`localhost` that browser looks for the API on *its own* machine and everything fails. `expose`
+rewrites them to your address and restarts the UI.
+
+| Share this | For |
+| --- | --- |
+| `http://<your-ip>:3000` | The explorer |
+| `http://<your-ip>:8546` | The RPC endpoint (add as a custom network, chain id 31337) |
+| `http://<your-ip>/api/v2` | Blockscout's REST API |
+
+`./devnet.sh local` puts it back. Re-run `expose` if your IP changes — a laptop that switches
+networks will leave the explorer pointing at an address that no longer exists.
+
+### Read-only mode
+
+The control API has no authentication. Anyone who can reach it can rewrite balances and storage,
+stop your node or delete a project — fine on a trusted network, not fine on café Wi-Fi. For a shared
+devnet, run it read-only:
+
+```bash
+./devnet.sh down
+DEVNET_READONLY=1 ./devnet.sh up
+./devnet.sh expose
+```
+
+The explorer stays fully usable — blocks, transactions, traces, the gas profiler and the storage
+diff all work — while node control, state patches, project changes and state-changing RPC methods
+(`anvil_*`, `evm_*`, `hardhat_*`) return `403`. Read methods (`eth_*`, `net_*`, `debug_trace*`) are
+untouched.
+
+macOS may ask to allow incoming connections the first time you expose the stack.
+
+---
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -150,6 +196,7 @@ volumes and reindexes from scratch.
 | `DEVNET_CHAIN_ID` | `31337` | Chain id assumed before a node is started |
 | `DEVNET_WORKSPACE` | parent of this repo | Where `blockscout/` and `blockscout-frontend/` are cloned |
 | `DEVNET_DB_PATH` | `./devnet.db` | Move the SQLite file elsewhere |
+| `DEVNET_READONLY` | unset | `1` disables every state-changing route and RPC method |
 | `ETHERSCAN_API_KEY` | — | Enables ABI auto-fetch from Etherscan V2 (multichain). Sourcify needs no key |
 
 Explorer UI settings (network name, currency, API host) live in `blockscout-frontend/.env.local`,
@@ -368,6 +415,7 @@ anvil-devnet-ui/
 │   ├── projectStore.ts           # project CRUD + cascade delete
 │   ├── validate.ts / route.ts    # input validation and uniform error handling
 │   └── rpc.ts                    # viem client + rpc()/rpcBatch()
+├── proxy.ts                      # read-only guard (DEVNET_READONLY)
 ├── stack/
 │   ├── setup.sh                  # fetch Blockscout, apply the DevNet overlay
 │   ├── docker-compose/           # devnet.override.yml for Blockscout's anvil preset
