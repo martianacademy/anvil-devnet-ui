@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Blockscout
 
-import { Box, chakra, Flex, Grid, Code } from '@chakra-ui/react';
+import { Box, Flex, Grid, Code } from '@chakra-ui/react';
 import React from 'react';
 
 import type { NodeStatus } from 'src/features/devnet/api/types';
@@ -108,6 +108,13 @@ const DevNetControl = () => {
     });
   }, [ run ]);
 
+  const handleSyncExplorer = React.useCallback(() => {
+    return run('Explorer sync started', async() => {
+      await devnetApi.post('/anvil/explorer-sync');
+      return 'Rebuilding the explorer index for this node…';
+    });
+  }, [ run ]);
+
   const handleReset = React.useCallback(() => {
     return run('Session reset', async() => {
       const result = await devnetApi.post<{ deletedRows: { blocks: number; transactions: number } }>(
@@ -118,6 +125,17 @@ const DevNetControl = () => {
     });
   }, [ run, chainId ]);
 
+  const syncStatus = status.explorer?.sync?.status;
+  const syncMessage = status.explorer?.sync?.message;
+  // While a sync is in flight it is already fixing the mismatch — saying so twice
+  // (and telling the user to run commands) is just noise.
+  const needsExplorerSync = Boolean(
+    status.running &&
+    status.explorer &&
+    syncStatus !== 'syncing' &&
+    (!status.explorer.indexed || (status.chainId !== null && status.chainId !== status.explorer.chainId)),
+  );
+
   return (
     <>
       <PageTitle title="DevNet control" secondRow={ <DevNetStatusBar status={ status as NodeStatus } isLoading={ isLoading }/> }/>
@@ -127,54 +145,40 @@ const DevNetControl = () => {
           <Alert status="error">{ status.lastError }</Alert>
         ) }
 
-        { status.explorer?.sync?.status === 'syncing' && (
+        { syncStatus === 'syncing' && (
           <Alert status="info">
             <Box>
               <Box fontWeight="500">Rebuilding the explorer index…</Box>
               <Box fontSize="sm" mt={ 1 }>
-                { status.explorer.sync.message } The explorer will be unreachable for a minute or two
+                { syncMessage } The explorer will be unreachable for a minute or two
                 while its containers restart with an empty database.
               </Box>
             </Box>
           </Alert>
         ) }
 
-        { status.explorer?.sync?.status === 'error' && (
-          <Alert status="error">{ status.explorer.sync.message }</Alert>
+        { syncStatus === 'error' && (
+          <Alert status="error">{ syncMessage }</Alert>
         ) }
 
-        { status.explorer?.sync?.status === 'unavailable' && (
-          <Alert status="warning">{ status.explorer.sync.message }</Alert>
+        { syncStatus === 'unavailable' && (
+          <Alert status="warning">{ syncMessage }</Alert>
         ) }
 
-        { status.running && status.explorer && !status.explorer.indexed && (
+        { needsExplorerSync && (
           <Alert status="warning">
-            <Box>
-              <Box fontWeight="500">
-                The explorer is not indexing this node.
+            <Flex flexDir="column" gap={ 2 } w="100%">
+              <Box fontWeight="500">The explorer is indexing a different chain.</Box>
+              <Box fontSize="sm">
+                This node is chain { status.chainId } on port { status.port }, while the explorer was
+                started for chain { status.explorer?.chainId } on port { status.explorer?.rpcPort }, so its
+                blocks and transactions will not show up. It follows automatically within about ten
+                seconds — or do it now, which wipes the old chain&apos;s index and reindexes from block 0.
               </Box>
-              <Box fontSize="sm" mt={ 1 }>
-                Blockscout only watches port { status.explorer.rpcPort }, and this node is on { status.port } —
-                its blocks and transactions will not appear in the explorer. Restart the node on
-                port { status.explorer.rpcPort }, or point the whole stack at this one with{ ' ' }
-                <chakra.code>DEVNET_RPC_PORT={ status.port } ./devnet.sh reset</chakra.code>.
-              </Box>
-            </Box>
-          </Alert>
-        ) }
-
-        { status.running && status.explorer && status.explorer.indexed && status.chainId !== null &&
-          status.chainId !== status.explorer.chainId && (
-          <Alert status="warning">
-            <Box>
-              <Box fontWeight="500">Chain id changed under the indexer.</Box>
-              <Box fontSize="sm" mt={ 1 }>
-                This node reports chain { status.chainId } but the explorer was started for
-                chain { status.explorer.chainId }. Its database still holds the old chain — run{ ' ' }
-                <chakra.code>DEVNET_CHAIN_ID={ status.chainId } ./devnet.sh reset</chakra.code>{ ' ' }
-                to reindex, or <chakra.code>./devnet.sh fork &lt;rpc-url&gt;</chakra.code> to set it all up at once.
-              </Box>
-            </Box>
+              <Button size="sm" alignSelf="flex-start" onClick={ handleSyncExplorer } loading={ isBusy }>
+                Sync explorer to this node
+              </Button>
+            </Flex>
           </Alert>
         ) }
 
