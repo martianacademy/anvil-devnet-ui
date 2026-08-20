@@ -1,4 +1,4 @@
-import { getAnvilState, getAllInstances } from "./anvilProcess.ts";
+import { getAnvilState, getAllInstances, listAnvilProcessesCached } from "./anvilProcess.ts";
 import { listProjects } from "./projectStore.ts";
 
 export interface ActiveTarget {
@@ -6,7 +6,7 @@ export interface ActiveTarget {
     chainId: number;
     projectId: string | null;
     /** Where the answer came from — useful for debugging "wrong port" reports. */
-    source: "explicit" | "instance" | "database" | "default";
+    source: "explicit" | "instance" | "discovered" | "database" | "default";
 }
 
 /**
@@ -61,6 +61,19 @@ export function resolveActiveProject(projectId?: string | null): ActiveTarget {
                 source: "instance",
             };
         }
+    }
+
+    // Nothing in memory: a dev-server reload loses the handles, and a node may have
+    // been started from a terminal. Trust what is actually listening over any config.
+    const listening = listAnvilProcessesCached();
+    if (listening.length > 0) {
+        const preferred = listening.find((proc) => proc.port === DEFAULT_PORT) ?? listening[0];
+        return {
+            port: preferred.port,
+            chainId: DEFAULT_CHAIN_ID,
+            projectId: preferred.projectId,
+            source: "discovered",
+        };
     }
 
     const running = lookupProjects().find((p) => p.running);

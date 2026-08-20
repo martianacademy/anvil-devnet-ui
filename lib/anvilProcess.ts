@@ -291,6 +291,19 @@ export interface AnvilProcessInfo {
  * not. A node left over from a previous session (or a terminal) is the usual reason
  * a start fails with "port already in use", and it is invisible from the UI otherwise.
  */
+/** `lsof` is a process spawn, and the poll loops call this often. */
+let processCache: { at: number; value: AnvilProcessInfo[] } = { at: 0, value: [] };
+const PROCESS_CACHE_TTL_MS = 2000;
+
+/** Cached view of {@link listAnvilProcesses} for hot paths. */
+export function listAnvilProcessesCached(): AnvilProcessInfo[] {
+    const now = Date.now();
+    if (now - processCache.at < PROCESS_CACHE_TTL_MS) return processCache.value;
+    const value = listAnvilProcesses();
+    processCache = { at: now, value };
+    return value;
+}
+
 export function listAnvilProcesses(): AnvilProcessInfo[] {
     let output: string;
     try {

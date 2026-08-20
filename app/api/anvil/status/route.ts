@@ -1,7 +1,7 @@
 import os from "os";
-import { getAnvilState, isAnvilRunning } from "@/lib/anvilProcess";
+import { getAnvilState, isAnvilRunning, listAnvilProcessesCached } from "@/lib/anvilProcess";
 import { resolveFromRequest } from "@/lib/activeProject";
-import { getExplorerSyncState } from "@/lib/explorerStack";
+import { getExplorerSyncState, readExplorerConfig } from "@/lib/explorerStack";
 import { handleRoute } from "@/lib/route";
 
 export const dynamic = "force-dynamic";
@@ -62,15 +62,17 @@ export async function GET(req: Request) {
         const active = resolveFromRequest(req);
         const state = getAnvilState(active.projectId ?? undefined);
 
-        // Probe the resolved port first, then the configured default as a fallback
-        // (covers an anvil started outside the UI).
-        const fallbackPort = Number(process.env.DEVNET_RPC_PORT ?? 8545) || 8545;
-        const ports = [...new Set([active.port, fallbackPort])];
+        // Probe the resolved port first, then every port an anvil is actually
+        // listening on, then the conventional default. Relying on the configured
+        // port alone made a node started on any other port look "stopped".
+        const listening = listAnvilProcessesCached().map((proc) => proc.port);
+        const ports = [...new Set([ active.port, ...listening, EXPLORER_RPC_PORT, 8545 ])];
         const probes = await Promise.all(ports.map(probePort));
         const index = probes.findIndex((p) => p !== null);
         const probe = index === -1 ? null : probes[index];
 
         const running = probe !== null || isAnvilRunning(active.projectId ?? undefined);
+        const explorerConfig = readExplorerConfig();
         const port = index === -1 ? active.port : ports[index];
         const chainId = probe?.chainId ?? active.chainId;
 
@@ -89,10 +91,12 @@ export async function GET(req: Request) {
             lastError: state.lastError,
             config: state.config ? { ...state.config, port, chainId } : null,
             explorer: {
-                rpcPort: EXPLORER_RPC_PORT,
-                chainId: EXPLORER_CHAIN_ID,
+                // Read from the container, not this process's env: the two drift as
+                // soon as the stack is reconfigured for a different node.
+                rpcPort: explorerConfig.port ?? EXPLORER_RPC_PORT,
+                chainId: explorerConfig.chainId ?? EXPLORER_CHAIN_ID,
                 /** False when this node is running somewhere the indexer is not watching. */
-                indexed: !running || port === EXPLORER_RPC_PORT,
+                indexed: !running || (explorerConfig.port ?? EXPLORER_RPC_PORT) === port,
                 sync: getExplorerSyncState(),
             },
         };

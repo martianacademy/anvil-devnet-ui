@@ -1,4 +1,4 @@
-import { execFile, spawn } from "child_process";
+import { execFile, execFileSync, spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 
@@ -43,6 +43,91 @@ const store = globalStore.__devnetExplorerSync;
 
 export function getExplorerSyncState(): ExplorerSyncState {
     return store.state;
+}
+
+export interface ExplorerConfig {
+    chainId: number | null;
+    port: number | null;
+}
+
+let configCache: { at: number; value: ExplorerConfig } = { at: 0, value: { chainId: null, port: null } };
+const CONFIG_CACHE_TTL_MS = 5000;
+
+/**
+ * What the running Blockscout backend is actually configured for, read from the
+ * container rather than from this process's env — the two drift as soon as the
+ * stack is reconfigured for a different node.
+ */
+export function readExplorerConfig(): ExplorerConfig {
+    const now = Date.now();
+    if (now - configCache.at < CONFIG_CACHE_TTL_MS) return configCache.value;
+
+    let value: ExplorerConfig = { chainId: null, port: null };
+    try {
+        const raw = execFileSync("docker", [ "inspect", "backend", "--format", "{{json .Config.Env}}" ], {
+            encoding: "utf8",
+            stdio: [ "ignore", "pipe", "ignore" ],
+            timeout: 5000,
+        });
+        const env: string[] = JSON.parse(raw);
+        const find = (key: string) => env.find((entry) => entry.startsWith(`${key}=`))?.split("=").slice(1).join("=");
+
+        const chainId = Number(find("CHAIN_ID"));
+        const url = find("ETHEREUM_JSONRPC_HTTP_URL") ?? "";
+        const port = Number(url.match(/:(\d+)\/?$/)?.[1]);
+
+        value = {
+            chainId: Number.isFinite(chainId) ? chainId : null,
+            port: Number.isFinite(port) ? port : null,
+        };
+    } catch {
+        /* container not running */
+    }
+
+    configCache = { at: now, value };
+    return value;
+}
+
+/** Force the next {@link readExplorerConfig} to hit docker again. */
+function invalidateConfigCache() {
+    configCache = { at: 0, value: configCache.value };
+}
+
+const FOLLOW_COOLDOWN_MS = 60_000;
+let lastFollowAt = 0;
+let lastSeen: { chainId: number; port: number } | null = null;
+
+/**
+ * Keep the explorer pointed at whatever node is actually running.
+ *
+ * Called by the watcher on an interval. A node has to be observed twice with the
+ * same identity before the stack is recreated, so a node that is mid-restart does
+ * not cost a full reindex.
+ */
+export function followNode(node: { chainId: number; port: number }): void {
+    if (AUTOSYNC_DISABLED || store.state.status === "syncing") {
+        return;
+    }
+
+    const stable = lastSeen?.chainId === node.chainId && lastSeen?.port === node.port;
+    lastSeen = node;
+    if (!stable) {
+        return;
+    }
+
+    const config = readExplorerConfig();
+    if (config.chainId === null || config.port === null) {
+        return;
+    }
+    if (config.chainId === node.chainId && config.port === node.port) {
+        return;
+    }
+    if (Date.now() - lastFollowAt < FOLLOW_COOLDOWN_MS) {
+        return;
+    }
+
+    lastFollowAt = Date.now();
+    syncExplorer(node.chainId, node.port);
 }
 
 /** Where the Blockscout compose files live — cloned next to this repo by stack/setup.sh. */
@@ -232,6 +317,7 @@ export function syncExplorer(chainId: number, port: number): ExplorerSyncState {
             await run("docker", [ "restart", "proxy" ], { cwd: dir, timeoutMs: 60_000 }).catch(() => { });
 
             await syncFrontend(chainId, port).catch(() => { });
+            invalidateConfigCache();
 
             store.state = {
                 status: ready ? "ready" : "error",
