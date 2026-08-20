@@ -275,6 +275,101 @@ export async function stopAnvil(projectId?: string, port?: number): Promise<void
     if (usePort !== undefined) killOrphanAnvil(usePort);
 }
 
+export interface AnvilProcessInfo {
+    pid: number;
+    port: number;
+    /** True when this app spawned it and still holds the handle. */
+    managed: boolean;
+    /** Project the instance belongs to, when managed. */
+    projectId: string | null;
+    /** Whether it is reachable on all interfaces or only on loopback. */
+    address: string;
+}
+
+/**
+ * Every anvil currently listening on this machine, whether this app started it or
+ * not. A node left over from a previous session (or a terminal) is the usual reason
+ * a start fails with "port already in use", and it is invisible from the UI otherwise.
+ */
+export function listAnvilProcesses(): AnvilProcessInfo[] {
+    let output: string;
+    try {
+        output = execFileSync("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+        });
+    } catch {
+        return [];
+    }
+
+    const byPid = new Map<number, AnvilProcessInfo>();
+
+    for (const line of output.split("\n")) {
+        const columns = line.trim().split(/\s+/);
+        if (columns.length < 9 || columns[0] !== "anvil") continue;
+
+        const pid = parseInt(columns[1], 10);
+        // lsof ends the line with the connection state, e.g. "TCP *:8545 (LISTEN)".
+        const name = columns[columns.length - 2];
+        const port = parseInt(name.slice(name.lastIndexOf(":") + 1), 10);
+        if (!Number.isInteger(pid) || !Number.isInteger(port)) continue;
+
+        // lsof lists IPv4 and IPv6 rows separately for the same socket.
+        if (byPid.has(pid)) continue;
+
+        let managed = false;
+        let projectId: string | null = null;
+        for (const [key, state] of instances) {
+            if (state.proc?.pid === pid) {
+                managed = true;
+                projectId = key === LEGACY_KEY ? null : key;
+                break;
+            }
+        }
+
+        byPid.set(pid, {
+            pid,
+            port,
+            managed,
+            projectId,
+            address: name.slice(0, name.lastIndexOf(":")),
+        });
+    }
+
+    return [...byPid.values()].sort((a, b) => a.port - b.port);
+}
+
+/**
+ * Kill an anvil by pid, refusing anything that is not actually anvil.
+ * Managed instances also get their in-process state cleared.
+ */
+export function killAnvilProcess(pid: number): boolean {
+    if (!isAnvilPid(pid)) return false;
+
+    for (const [, state] of instances) {
+        if (state.proc?.pid === pid) {
+            state.proc = null;
+            state.config = null;
+            state.startedAt = null;
+        }
+    }
+
+    try {
+        process.kill(pid, "SIGTERM");
+    } catch {
+        return false;
+    }
+
+    // SIGTERM is usually enough; make sure it is gone either way.
+    setTimeout(() => {
+        try {
+            if (isAnvilPid(pid)) process.kill(pid, "SIGKILL");
+        } catch { /* already gone */ }
+    }, 2000);
+
+    return true;
+}
+
 /** Kill a leftover anvil holding `port` — never touches non-anvil processes. */
 export function killOrphanAnvil(port: number): boolean {
     for (const pid of pidsOnPort(port)) {

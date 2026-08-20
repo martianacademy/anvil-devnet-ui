@@ -325,6 +325,8 @@ Scope any request to a specific project with `?projectId=…` or the `x-project-
 | `POST` | `/api/anvil/stop` | — | SIGTERM, then SIGKILL after 3 s, then free the port |
 | `GET` | `/api/anvil/status` | — | `{ running, managed, pid, port, chainId, blockNumber, gasPrice, uptime, lastError, config }` |
 | `GET` | `/api/anvil/logs` | `?limit=200` | Recent process output, the log path and the last start error |
+| `GET` | `/api/anvil/processes` | — | Every Anvil listening on the machine, with pid, port, bind address and whether this app started it |
+| `DELETE` | `/api/anvil/processes` | `{ pid }`, `{ port }` or `{ all: true }` | Stop a stray node holding a port (never touches non-Anvil processes) |
 | `POST` | `/api/anvil/reset` | `{ chainId? }` | Stop the node, clear indexed rows and delete the persisted state |
 
 ```bash
@@ -480,7 +482,8 @@ anvil-devnet-ui/
 | `/api` returns **502** from the explorer | nginx caches the backend's IP at boot; a backend restart leaves it stale. `docker restart proxy` (`devnet.sh up` does this automatically). |
 | Backend crash-loops with **“ssl not available”** | The bundled Postgres has no TLS. `ECTO_USE_SSL=false` is set in `devnet.override.yml` — make sure the override is actually passed. |
 | Blockscout shows **blocks that no longer exist** | Anvil restarted at block 0 while the index kept the old chain. Run `./devnet.sh reset`. |
-| The indexer never sees the chain | Anvil must listen on `0.0.0.0`, otherwise the containers cannot reach it through `host.docker.internal`. Start it via `devnet.sh` or the control API. |
+| The indexer never sees the chain | Anvil must listen on `0.0.0.0`, otherwise the containers cannot reach it through `host.docker.internal`. Start it via `devnet.sh` or the control API. The Anvil processes list on `/devnet` shows each node's bind address. |
+| **“Port already in use”** when starting | Something else is on that port — often a node from an earlier session. The Anvil processes list on `/devnet` shows every listening Anvil with a Stop button, including ones this app did not start. |
 | `pnpm install` fails building **node-datachannel** | A transitive WebRTC dependency compiles native code. Install with `--ignore-scripts` (what `stack/setup.sh` does); nothing needs it at runtime. |
 | `pnpm dev:local` fails on **`git describe`** | The frontend clone has no tags. `git tag devnet-fork-base` inside it (also done by `stack/setup.sh`). |
 | **“Cannot find module node:sqlite”** | Node is older than 22.5. Upgrade Node — Bun does not implement `node:sqlite`, but `next dev`/`next build` run under Node anyway. |

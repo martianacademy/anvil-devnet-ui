@@ -10,6 +10,7 @@ import PageTitle from 'src/shell/page/title/PageTitle';
 import { devnetApi, DevNetApiError } from 'src/features/devnet/api/client';
 import { useNodeStatus, usePolledResource } from 'src/features/devnet/api/useDevnet';
 import DevNetField from 'src/features/devnet/components/DevNetField';
+import DevNetProcessList from 'src/features/devnet/components/DevNetProcessList';
 import DevNetSection from 'src/features/devnet/components/DevNetSection';
 import DevNetStatusBar from 'src/features/devnet/components/DevNetStatusBar';
 
@@ -207,6 +208,13 @@ const DevNetControl = () => {
               />
             </Box>
           </Grid>
+        </DevNetSection>
+
+        <DevNetSection
+          title="Anvil processes"
+          description="Stop a node that is holding a port — even one started outside this app."
+        >
+          <DevNetProcessList onChange={ refetch }/>
         </DevNetSection>
 
         <DevNetSection title="Node logs" description={ logs.logPath ?? 'Live output from the managed Anvil process' }>
