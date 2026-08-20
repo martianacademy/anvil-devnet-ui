@@ -158,6 +158,19 @@ index 117f188..a7875cb 100644
        {
          text: 'Blockchain',
          icon: 'navigation/blockchain',
+diff --git a/src/slices/search/components/search-bar/SearchBarInput.tsx b/src/slices/search/components/search-bar/SearchBarInput.tsx
+index efc40f0..a0912ad 100644
+--- a/src/slices/search/components/search-bar/SearchBarInput.tsx
++++ b/src/slices/search/components/search-bar/SearchBarInput.tsx
+@@ -132,7 +132,7 @@ const SearchBarInput = (
+         <Input
+           size={{ base: isHeroBanner ? 'md' : 'sm', lg: 'md' }}
+           placeholder={ getPlaceholder() }
+-          value={ value }
++          value={ value ?? '' }
+           onChange={ handleChange }
+           onFocus={ onFocus }
+           tabIndex={ readOnly ? -1 : 0 }
 diff --git a/src/slices/tx/pages/details/Transaction.tsx b/src/slices/tx/pages/details/Transaction.tsx
 index 2a14a6d..bb9bf08 100644
 --- a/src/slices/tx/pages/details/Transaction.tsx

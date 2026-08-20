@@ -60,7 +60,7 @@ if git -C "$FRONTEND_DIR" apply --check --reverse "$REPO/stack/explorer-overlay/
   echo "  ✓ upstream patch already applied"
 else
   git -C "$FRONTEND_DIR" apply "$REPO/stack/explorer-overlay/upstream.patch"
-  echo "  ✓ upstream patch applied (nav, metadata, transaction tabs)"
+  echo "  ✓ upstream patch applied (nav, metadata, transaction tabs, search input)"
 fi
 
 echo "→ Frontend dependencies"
