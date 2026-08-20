@@ -19,6 +19,17 @@ import { Button } from 'src/toolkit/chakra/button';
 import { toaster } from 'src/toolkit/chakra/toaster';
 
 const LOGS_POLL_MS = 4000;
+const DEFAULT_CHAIN_ID = 31337;
+const DEFAULT_PORT = 8546;
+const DEFAULT_BLOCK_TIME = 2;
+const DEFAULT_ACCOUNTS = 10;
+const DEFAULT_BALANCE = 10000;
+
+/** Blank and unparseable inputs fall back rather than reaching the API as NaN. */
+function numberOr(value: string, fallback: number): number {
+  const parsed = Number(value.trim());
+  return value.trim() === '' || Number.isNaN(parsed) ? fallback : parsed;
+}
 
 interface LogsResponse {
   logs: Array<string>;
@@ -35,31 +46,29 @@ const DevNetControl = () => {
   );
 
   const [ isBusy, setIsBusy ] = React.useState(false);
-  const [ chainId, setChainId ] = React.useState('31337');
-  const [ port, setPort ] = React.useState('8546');
-  const [ blockTime, setBlockTime ] = React.useState('2');
-  const [ accounts, setAccounts ] = React.useState('10');
-  const [ balance, setBalance ] = React.useState('10000');
+  const [ chainId, setChainId ] = React.useState(String(DEFAULT_CHAIN_ID));
+  const [ port, setPort ] = React.useState(String(DEFAULT_PORT));
+  const [ blockTime, setBlockTime ] = React.useState(String(DEFAULT_BLOCK_TIME));
+  const [ accounts, setAccounts ] = React.useState(String(DEFAULT_ACCOUNTS));
+  const [ balance, setBalance ] = React.useState(String(DEFAULT_BALANCE));
   const [ forkUrl, setForkUrl ] = React.useState('');
   const [ forkBlock, setForkBlock ] = React.useState('');
 
-  // Reflect the running node's config in the form so a restart keeps its settings.
+  // Mirror whatever the node is really running with. The inputs are disabled while
+  // it runs, so this is a readout; once it stops the last values stay in the form
+  // and a restart reuses them.
   React.useEffect(() => {
-    const config = status.config as Partial<Record<string, number | string>> | null;
+    const config = status.config;
     if (!config || !status.running) {
       return;
     }
-    setChainId(String(config.chainId ?? status.chainId ?? 31337));
+    setChainId(String(config.chainId ?? status.chainId ?? DEFAULT_CHAIN_ID));
     setPort(String(config.port ?? status.port));
-    setBlockTime(String(config.blockTime ?? 2));
-    setAccounts(String(config.accounts ?? 10));
-    setBalance(String(config.balance ?? 10000));
-    if (config.forkUrl) {
-      setForkUrl(String(config.forkUrl));
-    }
-    if (config.forkBlockNumber) {
-      setForkBlock(String(config.forkBlockNumber));
-    }
+    setBlockTime(typeof config.blockTime === 'number' ? String(config.blockTime) : '');
+    setAccounts(String(config.accounts ?? DEFAULT_ACCOUNTS));
+    setBalance(typeof config.balance === 'number' ? String(config.balance) : '');
+    setForkUrl(config.forkUrl ?? '');
+    setForkBlock(typeof config.forkBlockNumber === 'number' ? String(config.forkBlockNumber) : '');
   }, [ status.config, status.running, status.chainId, status.port ]);
 
   const run = React.useCallback(async(label: string, action: () => Promise<string | void>) => {
@@ -82,14 +91,15 @@ const DevNetControl = () => {
   const handleStart = React.useCallback(() => {
     return run('Anvil started', async() => {
       const payload = {
-        chainId: Number(chainId),
-        port: Number(port),
-        blockTime: Number(blockTime),
-        accounts: Number(accounts),
-        balance: Number(balance),
+        chainId: numberOr(chainId, DEFAULT_CHAIN_ID),
+        port: numberOr(port, DEFAULT_PORT),
+        // An observed on-demand node leaves this blank; 0 is what that means to Anvil.
+        blockTime: numberOr(blockTime, 0),
+        accounts: numberOr(accounts, DEFAULT_ACCOUNTS),
+        balance: numberOr(balance, DEFAULT_BALANCE),
         baseFee: 0,
         ...(forkUrl.trim() ? { forkUrl: forkUrl.trim() } : {}),
-        ...(forkUrl.trim() && forkBlock.trim() ? { forkBlockNumber: Number(forkBlock) } : {}),
+        ...(forkUrl.trim() && forkBlock.trim() ? { forkBlockNumber: numberOr(forkBlock, 0) } : {}),
       };
       const result = await devnetApi.post<{ port: number; chainId: number; forkBlockNumber: number | null }>(
         '/anvil/start',
@@ -119,11 +129,19 @@ const DevNetControl = () => {
     return run('Session reset', async() => {
       const result = await devnetApi.post<{ deletedRows: { blocks: number; transactions: number } }>(
         '/anvil/reset',
-        { chainId: Number(chainId) },
+        { chainId: numberOr(chainId, DEFAULT_CHAIN_ID) },
       );
       return `Cleared ${ result.deletedRows.blocks } blocks and ${ result.deletedRows.transactions } transactions`;
     });
   }, [ run, chainId ]);
+
+  // An externally started node's settings are observed, not chosen here.
+  const isReadout = status.running && status.configSource === 'node';
+
+  let blockTimeHelper = '0 mines on demand';
+  if (isReadout) {
+    blockTimeHelper = blockTime ? '' : 'This node has no fixed interval — it mines on demand';
+  }
 
   const syncStatus = status.explorer?.sync?.status;
   const syncMessage = status.explorer?.sync?.message;
@@ -184,7 +202,9 @@ const DevNetControl = () => {
 
         <DevNetSection
           title="Node"
-          description="Start, stop and reset the local Anvil instance this explorer indexes."
+          description={ isReadout ?
+            'These values are read from the Anvil instance running right now — stop it to edit them.' :
+            'Start, stop and reset the local Anvil instance this explorer indexes.' }
           action={ (
             <Flex gap={ 2 }>
               <Button size="sm" onClick={ handleStart } loading={ isBusy } disabled={ status.running }>Start</Button>
@@ -196,17 +216,38 @@ const DevNetControl = () => {
           <Grid templateColumns={{ base: '1fr', lg: 'repeat(3, 1fr)' }} gap={ 4 }>
             <DevNetField label="Chain ID" value={ chainId } onChange={ setChainId } isDisabled={ status.running }/>
             <DevNetField label="Port" value={ port } onChange={ setPort } isDisabled={ status.running }/>
-            <DevNetField label="Block time (s)" value={ blockTime } onChange={ setBlockTime } helperText="0 mines on demand" isDisabled={ status.running }/>
+            <DevNetField
+              label="Block time (s)"
+              value={ blockTime }
+              onChange={ setBlockTime }
+              placeholder={ isReadout ? 'on demand' : undefined }
+              helperText={ blockTimeHelper }
+              isDisabled={ status.running }
+            />
             <DevNetField label="Accounts" value={ accounts } onChange={ setAccounts } isDisabled={ status.running }/>
-            <DevNetField label="Balance per account (ETH)" value={ balance } onChange={ setBalance } isDisabled={ status.running }/>
-            <DevNetField label="Fork block (optional)" value={ forkBlock } onChange={ setForkBlock } placeholder="latest" isDisabled={ status.running }/>
+            <DevNetField
+              label="Balance per account (ETH)"
+              value={ balance }
+              onChange={ setBalance }
+              helperText={ isReadout ? 'Current balance of the first account, rounded' : undefined }
+              isDisabled={ status.running }
+            />
+            <DevNetField
+              label="Fork block (optional)"
+              value={ forkBlock }
+              onChange={ setForkBlock }
+              placeholder={ isReadout ? '—' : 'latest' }
+              isDisabled={ status.running }
+            />
             <Box gridColumn={{ lg: 'span 3' }}>
               <DevNetField
                 label="Fork URL (optional)"
                 value={ forkUrl }
                 onChange={ setForkUrl }
-                placeholder="https://eth.llamarpc.com"
-                helperText="Leave empty for a clean local chain. The block is pinned automatically so restarts are reproducible."
+                placeholder={ isReadout ? 'not forked' : 'https://eth.llamarpc.com' }
+                helperText={ isReadout ?
+                  'Empty means this node runs a clean local chain rather than a fork.' :
+                  'Leave empty for a clean local chain. The block is pinned automatically so restarts are reproducible.' }
                 isMono
                 isDisabled={ status.running }
               />

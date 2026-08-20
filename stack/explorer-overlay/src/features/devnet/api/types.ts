@@ -1,5 +1,19 @@
 // SPDX-License-Identifier: LicenseRef-Blockscout
 
+/** What Anvil is actually running with — read off the node itself where possible. */
+export interface NodeConfig {
+  chainId?: number;
+  port?: number;
+
+  /** Null when the node mines on demand rather than on a fixed interval. */
+  blockTime?: number | null;
+  accounts?: number;
+  balance?: number | null;
+  baseFee?: number | null;
+  forkUrl?: string;
+  forkBlockNumber?: number;
+}
+
 export interface NodeStatus {
   running: boolean;
   managed: boolean;
@@ -13,7 +27,10 @@ export interface NodeStatus {
   uptime: number;
   projectId: string | null;
   lastError: string | null;
-  config: Record<string, unknown> | null;
+  config: NodeConfig | null;
+
+  /** 'node' when the config was read from the live node, 'managed' when only this app's memory of it. */
+  configSource?: 'node' | 'managed' | null;
   explorer?: {
 
     /** Port the Blockscout indexer is watching. */

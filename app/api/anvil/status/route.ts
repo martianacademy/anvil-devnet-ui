@@ -2,6 +2,7 @@ import os from "os";
 import { getAnvilState, isAnvilRunning, listAnvilProcessesCached } from "@/lib/anvilProcess";
 import { resolveFromRequest } from "@/lib/activeProject";
 import { getExplorerSyncState, readExplorerConfig } from "@/lib/explorerStack";
+import { observeConfig, rpcBatch } from "@/lib/nodeObserver";
 import { handleRoute } from "@/lib/route";
 
 export const dynamic = "force-dynamic";
@@ -21,33 +22,21 @@ interface Probe {
     gasPrice: string | null;
 }
 
-/** One batched round trip: is anything alive on this port, and what is it? */
+/** Is anything alive on this port, and what is it? */
 async function probePort(port: number): Promise<Probe | null> {
-    try {
-        const res = await fetch(`http://127.0.0.1:${port}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify([
-                { jsonrpc: "2.0", method: "eth_blockNumber", params: [], id: 0 },
-                { jsonrpc: "2.0", method: "eth_chainId", params: [], id: 1 },
-                { jsonrpc: "2.0", method: "eth_gasPrice", params: [], id: 2 },
-            ]),
-            signal: AbortSignal.timeout(800),
-        });
-        if (!res.ok) return null;
-        const rows = (await res.json()) as { id: number; result?: string }[];
-        if (!Array.isArray(rows)) return null;
-        const byId = new Map(rows.map((r) => [r.id, r.result]));
-        const blockHex = byId.get(0);
-        if (!blockHex) return null;
-        return {
-            blockNumber: parseInt(blockHex, 16),
-            chainId: byId.get(1) ? parseInt(byId.get(1) as string, 16) : 31337,
-            gasPrice: byId.get(2) ?? null,
-        };
-    } catch {
-        return null;
-    }
+    const out = await rpcBatch(port, [
+        { method: "eth_blockNumber", params: [] },
+        { method: "eth_chainId", params: [] },
+        { method: "eth_gasPrice", params: [] },
+    ]);
+    if (!out) return null;
+    const blockHex = out[0] as string | null;
+    if (!blockHex) return null;
+    return {
+        blockNumber: parseInt(blockHex, 16),
+        chainId: out[1] ? parseInt(out[1] as string, 16) : 31337,
+        gasPrice: (out[2] as string | null) ?? null,
+    };
 }
 
 /**
@@ -76,6 +65,16 @@ export async function GET(req: Request) {
         const port = index === -1 ? active.port : ports[index];
         const chainId = probe?.chainId ?? active.chainId;
 
+        // Prefer what the live node reports over what this process remembers
+        // starting: they diverge the moment anyone restarts Anvil by hand.
+        const observed = probe ? await observeConfig(port, probe.blockNumber, chainId) : null;
+        const sameNode = state.config?.port === observed?.port;
+        const config = observed ?
+            // Block time cannot be read back off a node, so a managed process is the
+            // only place its real value survives. Everything else comes off the wire.
+            { ...observed, blockTime: observed.blockTime ?? (sameNode ? state.config?.blockTime ?? null : null) } :
+            state.config ? { ...state.config, port, chainId } : null;
+
         return {
             running,
             managed: isAnvilRunning(active.projectId ?? undefined),
@@ -89,7 +88,9 @@ export async function GET(req: Request) {
             uptime: state.startedAt ? Math.floor((Date.now() - state.startedAt) / 1000) : 0,
             projectId: active.projectId,
             lastError: state.lastError,
-            config: state.config ? { ...state.config, port, chainId } : null,
+            config,
+            /** Where `config` came from, so the UI can say so instead of implying it is settable. */
+            configSource: observed ? "node" : state.config ? "managed" : null,
             explorer: {
                 // Read from the container, not this process's env: the two drift as
                 // soon as the stack is reconfigured for a different node.
