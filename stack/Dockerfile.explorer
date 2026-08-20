@@ -78,7 +78,18 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # with no icons at all. Blockscout's own build:next also downloads external asset
 # configs — skipped here, since a local devnet has no marketplace or branding to
 # fetch and it would make the image build depend on a third-party host.
-RUN pnpm svg:build-sprite && pnpm run build
+# Blockscout's own Dockerfile raises the heap to 8 GB for this build; it OOMs at
+# Node's default. Kept a little lower so it fits a stock Docker Desktop (which
+# hands out about 8 GB in total) — raise it if your machine has room.
+ARG NODE_HEAP_MB=6144
+ENV NODE_OPTIONS="--max-old-space-size=${NODE_HEAP_MB}"
+
+# routes:generate rewrites the typed route map. The committed one does not know
+# about the /devnet pages this overlay adds, and several upstream files are typed
+# as a Record over every route.
+RUN pnpm svg:build-sprite \
+    && pnpm routes:generate \
+    && pnpm run build
 
 # ── runtime ──────────────────────────────────────────────────────────────────
 FROM node:22-slim AS runtime
