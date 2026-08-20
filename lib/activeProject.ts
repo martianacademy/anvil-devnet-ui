@@ -37,7 +37,14 @@ export function invalidateActiveProjectCache() {
  * Resolve which Anvil instance API routes should talk to.
  * Priority: explicit projectId > live in-process instance > project row marked running > legacy default.
  */
-export function resolveActiveProject(projectId?: string | null): ActiveTarget {
+export interface ResolveDeps {
+    /** Injectable so tests do not depend on what is listening on the machine. */
+    listProcesses: () => Array<{ port: number; projectId: string | null; managed: boolean }>;
+}
+
+const defaultDeps: ResolveDeps = { listProcesses: listAnvilProcessesCached };
+
+export function resolveActiveProject(projectId?: string | null, deps: ResolveDeps = defaultDeps): ActiveTarget {
     if (projectId) {
         const state = getAnvilState(projectId);
         if (state.config) {
@@ -65,7 +72,7 @@ export function resolveActiveProject(projectId?: string | null): ActiveTarget {
 
     // Nothing in memory: a dev-server reload loses the handles, and a node may have
     // been started from a terminal. Trust what is actually listening over any config.
-    const listening = listAnvilProcessesCached();
+    const listening = deps.listProcesses();
     if (listening.length > 0) {
         const preferred = listening.find((proc) => proc.port === DEFAULT_PORT) ?? listening[0];
         return {

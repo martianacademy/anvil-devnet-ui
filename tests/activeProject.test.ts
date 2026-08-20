@@ -29,7 +29,7 @@ const config = (port: number, chainId: number) => ({
 test("falls back to 8545/31337 when nothing is running", () => {
     getAllInstances().clear();
     invalidateActiveProjectCache();
-    const target = resolveActiveProject();
+    const target = resolveActiveProject(undefined, { listProcesses: () => [] });
     assert.deepEqual(
         { port: target.port, chainId: target.chainId, projectId: target.projectId },
         { port: 8545, chainId: 31337, projectId: null }
@@ -54,11 +54,33 @@ test("a live in-process instance beats the database", () => {
     // Only the fields resolveActiveProject inspects need to look like a process.
     state.proc = { killed: false } as unknown as NonNullable<typeof state.proc>;
 
-    const target = resolveActiveProject();
+    const target = resolveActiveProject(undefined, { listProcesses: () => [] });
     assert.equal(target.port, 8700);
     assert.equal(target.projectId, "proj_live");
     assert.equal(target.source, "instance");
     state.proc = null;
+});
+
+/** No anvil listening — the machine running the tests must not change the outcome. */
+const noProcesses = { listProcesses: () => [] };
+
+test("a listening anvil beats a stale project row", () => {
+    getAllInstances().clear();
+    const project = createProject({ name: "stale", chainId: 1, port: 8801 });
+    updateProjectStatus(project.id, "running");
+    invalidateActiveProjectCache();
+
+    const target = resolveActiveProject(undefined, {
+        listProcesses: () => [ { port: 9545, projectId: null, managed: false } ],
+    });
+
+    // The row claims a node; the process list proves one. The proof wins.
+    assert.equal(target.port, 9545);
+    assert.equal(target.source, "discovered");
+
+    // Leave no running row behind for the next test.
+    updateProjectStatus(project.id, "stopped");
+    invalidateActiveProjectCache();
 });
 
 test("a project row marked running is used when no process handle survived a reload", () => {
@@ -67,7 +89,7 @@ test("a project row marked running is used when no process handle survived a rel
     updateProjectStatus(project.id, "running");
     invalidateActiveProjectCache();
 
-    const target = resolveActiveProject();
+    const target = resolveActiveProject(undefined, noProcesses);
     assert.equal(target.port, 8900);
     assert.equal(target.chainId, 8453);
     assert.equal(target.projectId, project.id);
