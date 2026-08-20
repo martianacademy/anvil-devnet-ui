@@ -51,9 +51,24 @@ RUN apt-get update \
 
 COPY --from=source /src ./
 
+# Blockscout's frontend pulls ~2,900 packages. On a slow or flaky link the
+# default fetch timeout kills the build near the end, after twenty minutes of
+# downloading, so give it real retries and keep fewer sockets in flight — the
+# contention is what starves individual downloads on a weak connection.
+#
+# The store is a cache mount: a failed build no longer starts from zero.
+#
 # --ignore-scripts: a transitive WebRTC dependency compiles native code and needs
 # a toolchain it never uses at runtime.
-RUN pnpm install --ignore-scripts --frozen-lockfile
+ENV PNPM_STORE_DIR=/pnpm-store
+RUN --mount=type=cache,target=/pnpm-store,sharing=locked \
+    pnpm config set store-dir /pnpm-store --global \
+    && pnpm config set fetch-retries 10 --global \
+    && pnpm config set fetch-retry-mintimeout 20000 --global \
+    && pnpm config set fetch-retry-maxtimeout 300000 --global \
+    && pnpm config set fetch-timeout 600000 --global \
+    && pnpm config set network-concurrency 4 --global \
+    && pnpm install --ignore-scripts --frozen-lockfile
 
 ENV NEXT_TELEMETRY_DISABLED=1
 # Blockscout reads its instance config at runtime from /node-api/config, so the
