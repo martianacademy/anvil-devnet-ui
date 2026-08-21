@@ -100,6 +100,13 @@ cmd_up_docker() {
   echo "→ building the explorer UI (first run takes a while — it compiles Blockscout's frontend)"
   compose build devnet-ui
 
+  # `compose up` only builds an image that is missing, so a control API changed
+  # since the last run would silently keep serving the old one.
+  if [ "${DEVNET_REBUILD_API:-0}" = "1" ]; then
+    echo "→ rebuilding the control API image"
+    compose build devnet-api
+  fi
+
   echo "→ containers"
   compose up -d
   wait_for "http://localhost/api/v2/config/backend-version" "blockscout api" 120 || {

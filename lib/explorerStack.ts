@@ -171,7 +171,16 @@ function frontendDir(): string | null {
 }
 
 const AUTOSYNC_DISABLED = process.env.DEVNET_EXPLORER_AUTOSYNC === "0";
+/**
+ * Where to ask whether the explorer is back. Not a constant because "localhost"
+ * is only right on the host path — inside a container it is the container, so
+ * readiness never arrives and a successful sync reports a four-minute timeout.
+ * The compose file points this at the proxy service.
+ */
 const BACKEND_URL = process.env.DEVNET_EXPLORER_API ?? "http://localhost/api/v2/config/backend-version";
+
+/** True when this API is itself one of the containers in the stack it manages. */
+const IN_STACK = process.env.DEVNET_STACK_MODE === "docker";
 const READY_TIMEOUT_MS = 4 * 60 * 1000;
 
 function run(command: string, args: string[], options: { cwd?: string; env?: Record<string, string>; timeoutMs?: number }): Promise<string> {
@@ -297,6 +306,11 @@ export function syncExplorer(chainId: number, port: number): ExplorerSyncState {
         // the Docker host; when this API runs as a container, the node is inside
         // it and host.docker.internal would point at the wrong machine.
         DEVNET_RPC_HOST: process.env.DEVNET_RPC_HOST ?? "host.docker.internal",
+        // The containerised UI reads its network identity from compose, so the
+        // same labels the host path writes into .env.local are passed here.
+        DEVNET_NETWORK_NAME: labelFor(chainId).name,
+        DEVNET_CURRENCY_NAME: labelFor(chainId).currency,
+        DEVNET_CURRENCY_SYMBOL: labelFor(chainId).symbol,
     };
 
     store.pending = store.pending
@@ -320,7 +334,18 @@ export function syncExplorer(chainId: number, port: number): ExplorerSyncState {
             // nginx resolves the backend once at boot; a recreated backend gets a new IP.
             await run("docker", [ "restart", "proxy" ], { cwd: dir, timeoutMs: 60_000 }).catch(() => { });
 
-            await syncFrontend(chainId, port).catch(() => { });
+            // The host path rewrites the frontend's .env.local; a containerised UI
+            // has no such file — its network identity comes from compose, so the
+            // container has to be recreated to pick up the new chain. --no-deps
+            // keeps it from recreating this very API out from under itself.
+            if (IN_STACK) {
+                await run("docker", [
+                    ...compose, "-f", "devnet-stack.yml",
+                    "up", "-d", "--force-recreate", "--no-deps", "--pull", "never", "devnet-ui",
+                ], { cwd: dir, env, timeoutMs: 180_000 }).catch(() => { });
+            } else {
+                await syncFrontend(chainId, port).catch(() => { });
+            }
             invalidateConfigCache();
 
             store.state = {

@@ -28,6 +28,14 @@ services:
       DEVNET_READONLY: "${DEVNET_READONLY:-}"
       # The node lives in this container, so that is where the indexer must look.
       DEVNET_RPC_HOST: devnet-api
+      # This API is one of the containers in the stack it manages: it must reach
+      # the explorer through the proxy service, and it must recreate the UI
+      # container on a chain change rather than rewriting a .env.local it has not got.
+      DEVNET_STACK_MODE: docker
+      # Needed when this API re-runs compose to recreate the UI: devnet-stack.yml
+      # names a build context, and compose cannot parse the file without it.
+      DEVNET_REPO_DIR: "${DEVNET_REPO_DIR}"
+      DEVNET_EXPLORER_API: http://proxy/api/v2/config/backend-version
       # Bind-mounted below at the identical path: `docker compose` runs against
       # the host's daemon, which resolves the relative bind mounts in Blockscout's
       # compose file itself. Same path in both places or it writes to the wrong one.
@@ -64,10 +72,12 @@ services:
       NEXT_PUBLIC_API_PORT: "80"
       NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: ws
       NEXT_PUBLIC_NETWORK_ID: "${DEVNET_CHAIN_ID:-31337}"
-      NEXT_PUBLIC_NETWORK_NAME: Anvil DevNet
-      NEXT_PUBLIC_NETWORK_SHORT_NAME: DevNet
-      NEXT_PUBLIC_NETWORK_CURRENCY_NAME: Ether
-      NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: ETH
+      # Overridden when the explorer follows the node onto a different chain, so a
+      # devnet on chain 56 says BNB rather than Ether.
+      NEXT_PUBLIC_NETWORK_NAME: "${DEVNET_NETWORK_NAME:-Anvil DevNet}"
+      NEXT_PUBLIC_NETWORK_SHORT_NAME: "${DEVNET_NETWORK_NAME:-DevNet}"
+      NEXT_PUBLIC_NETWORK_CURRENCY_NAME: "${DEVNET_CURRENCY_NAME:-Ether}"
+      NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: "${DEVNET_CURRENCY_SYMBOL:-ETH}"
       NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: "18"
       NEXT_PUBLIC_NETWORK_RPC_URL: "http://${DEVNET_PUBLIC_HOST:-localhost}:${DEVNET_RPC_PORT:-8546}"
       NEXT_PUBLIC_IS_ACCOUNT_SUPPORTED: "false"

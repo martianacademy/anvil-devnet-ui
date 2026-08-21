@@ -146,6 +146,9 @@ bun install          # control API dependencies
 ./devnet.sh up       # anvil, Blockscout, the control API and the UI as host processes
 ```
 
+`compose up` only builds an image that is missing, so after changing this repo's own code run
+`DEVNET_REBUILD_API=1 ./devnet.sh up --docker` — otherwise the old control API image keeps serving.
+
 Both paths serve the same thing on the same ports. The difference is where the control API, the
 explorer UI and Anvil run — containers, or your machine. `--docker` works on `up`, `down`, `reset`
 and `status`.

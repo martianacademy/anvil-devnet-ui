@@ -12,7 +12,16 @@
 FROM oven/bun:1.3 AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+# Retried because a half-downloaded tarball on a weak connection fails the whole
+# install ("Fail extracting tarball"), and a fresh attempt is cheap next to
+# making someone start the stack over.
+RUN for attempt in 1 2 3; do \
+      bun install --frozen-lockfile && break; \
+      echo "bun install failed (attempt ${attempt}) — retrying"; \
+      rm -rf node_modules; \
+      sleep 5; \
+    done; \
+    test -d node_modules
 
 # ── build ────────────────────────────────────────────────────────────────────
 # Built with Node, not Bun: persistence uses node:sqlite, which Bun does not
