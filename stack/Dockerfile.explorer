@@ -52,7 +52,7 @@ WORKDIR /app
 # there is no reason not to just compile it.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       git ca-certificates build-essential python3 cmake pkg-config \
+       git ca-certificates build-essential python3 cmake pkg-config jq \
     && rm -rf /var/lib/apt/lists/* \
     && corepack enable
 
@@ -125,9 +125,16 @@ fs.writeFileSync(file, source.replace(anchor, anchor + '\n    cpus: Number(proce
 "
 
 ARG NEXT_BUNDLER=webpack
-RUN pnpm svg:build-sprite \
+# build_sprite.sh ends with `export NEXT_PUBLIC_ICON_SPRITE_HASH=...`, and the
+# sprite is written to sprite.<hash>.svg. Running it as a subprocess loses that
+# export, the app falls back to /icons/sprite.svg, and every icon in the explorer
+# 404s — no logo, no menu button, no nav icons. Upstream sources it with `set -a`
+# for exactly this reason, so do the same, in the same shell as the build.
+RUN bash -c 'set -a \
+    && source ./deploy/scripts/build_sprite.sh \
+    && set +a \
     && pnpm routes:generate \
-    && sh -c 'if [ "$NEXT_BUNDLER" = "webpack" ]; then pnpm exec next build --webpack; else pnpm run build; fi'
+    && if [ "$NEXT_BUNDLER" = "webpack" ]; then pnpm exec next build --webpack; else pnpm run build; fi'
 
 # ── runtime ──────────────────────────────────────────────────────────────────
 FROM node:22-slim AS runtime
@@ -156,10 +163,28 @@ COPY --from=build /app/public ./public
 # a public deployment and is skipped.
 COPY --from=build /app/deploy/scripts/make_envs_script.sh /usr/local/bin/write-envs.sh
 
+# The sprite is written as sprite.<hash>.svg and the app asks for whatever
+# NEXT_PUBLIC_ICON_SPRITE_HASH says — read at runtime, not baked into the bundle.
+# Upstream carries the value from build to runtime through a .env file; deriving
+# it from the file that is actually present cannot drift out of step. Without it
+# every icon 404s and the explorer renders with no logo, menu button or nav icons.
+RUN printf '%s\n' \
+  '#!/bin/sh' \
+  'set -e' \
+  'sprite=$(ls public/icons/sprite.*.svg 2>/dev/null | head -1)' \
+  'if [ -n "$sprite" ]; then' \
+  '  NEXT_PUBLIC_ICON_SPRITE_HASH=$(basename "$sprite" .svg | cut -d. -f2)' \
+  '  export NEXT_PUBLIC_ICON_SPRITE_HASH' \
+  'fi' \
+  '/usr/local/bin/write-envs.sh ./public/assets/envs.js' \
+  'exec node server.js' \
+  > /usr/local/bin/start-explorer.sh \
+  && chmod +x /usr/local/bin/start-explorer.sh
+
 EXPOSE 3000
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=10 \
   CMD curl -fsS http://127.0.0.1:3000/ || exit 1
 
 # `next start` refuses to run against a standalone build; server.js is the entry.
-CMD ["sh", "-c", "/usr/local/bin/write-envs.sh ./public/assets/envs.js && exec node server.js"]
+CMD ["/usr/local/bin/start-explorer.sh"]
