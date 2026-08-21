@@ -31,6 +31,13 @@ services:
       # either. There is nothing here worth rate limiting.
       API_RATE_LIMIT_DISABLED: 'true'
 
+  # Blockscout's preset hard-codes this at ws://host.docker.internal:8545, so the
+  # account-abstraction indexer never followed the node this stack actually runs
+  # — it crash-looped, or silently watched whatever happened to be on 8545.
+  user-ops-indexer:
+    environment:
+      USER_OPS_INDEXER__INDEXER__RPC_URL: ws://${DEVNET_RPC_HOST:-host.docker.internal}:${DEVNET_RPC_PORT:-8546}/
+
   frontend:
     environment:
       NEXT_PUBLIC_NETWORK_ID: '${DEVNET_CHAIN_ID:-31337}'
