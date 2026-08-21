@@ -104,8 +104,10 @@ is Blockscout's frontend with a set of DevNet pages layered on top by `stack/set
 
 ## Requirements
 
-**Docker alone is enough.** Give Docker Desktop about 8 GB — Blockscout is ~10 containers, and the
-DevNet control API and explorer UI are two more.
+**Docker alone is enough.** Give Docker Desktop about 8 GB to run the stack — Blockscout is ~10
+containers, and the DevNet control API and explorer UI are two more. The one-off build of the
+explorer image wants more headroom than that: 12 GB makes it comfortable, and it is the only step
+that does.
 
 To run the control API and the explorer as host processes instead (faster edit-reload while hacking
 on this project), you also need:
@@ -133,7 +135,8 @@ The control API image is pulled from
 The explorer UI image is **built on your machine** and never pulled. That is not a packaging
 oversight: it contains a modified Blockscout frontend, and Blockscout's licence forbids distributing
 derivative works — see [Licence and attribution](#licence-and-attribution). The first build compiles
-their frontend and takes several minutes; after that it is cached.
+their frontend — expect fifteen minutes or so, most of it downloading ~2,900 packages — and produces
+a ~1.1 GB image. After that it is cached.
 
 ### Running it from source instead
 
@@ -586,6 +589,7 @@ anvil-devnet-ui/
 | `pnpm dev:local` fails on **`git describe`** | The frontend clone has no tags. `git tag devnet-fork-base` inside it (also done by `stack/setup.sh`). |
 | **“Cannot find module node:sqlite”** | Node is older than 22.5. Upgrade Node — Bun does not implement `node:sqlite`, but `next dev`/`next build` run under Node anyway. |
 | Explorer pages **500**, everything returns `Too Many Requests` | Blockscout's API rate limit — 300 requests per minute per IP by default. The frontend, the stats service and every browser all reach the backend from the same Docker gateway address, so they share one bucket, and a chain mining every two seconds empties it. `API_RATE_LIMIT_DISABLED=true` is set in `devnet.override.yml`; make sure the override is passed. |
+| The explorer image build is **killed** (exit 137, `cannot allocate memory`) | Compiling Blockscout's frontend is the heaviest thing in this project — upstream's own Dockerfile gives it an 8 GB heap. Raise Docker Desktop's memory (Settings → Resources) to 12 GB if you can, and stop the stack while it builds. `--build-arg NODE_HEAP_MB=8192` uses the extra room. |
 | The explorer image **fails to build** at `git apply` | Blockscout moved a file this project patches. `stack/Dockerfile.explorer` pins the upstream commit `upstream.patch` was generated against — if you bumped `BLOCKSCOUT_FRONTEND_REF`, regenerate the patch against the new tree. |
 | `--docker`: a node started **on your host is invisible** | The control API talks to nodes over `127.0.0.1`, which inside a container is the container. With `--docker`, start the node from the `/devnet` page so it runs there too. Use the from-source path if you want to keep starting Anvil by hand. |
 | `--docker`: a node on a **non-default port is unreachable from the host** | Only `DEVNET_RPC_PORT` is published from the API container. The indexer still follows the node over the compose network, but `cast`/MetaMask on your machine will not reach it — restart with `DEVNET_RPC_PORT=<port> ./devnet.sh up --docker`. |

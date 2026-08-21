@@ -44,8 +44,15 @@ RUN git apply /tmp/upstream.patch && rm /tmp/upstream.patch
 FROM node:22-slim AS build
 WORKDIR /app
 
+# The toolchain is here so the WebRTC dependency's native binding can actually
+# be built. On macOS that needs Xcode's command line tools, which is why the
+# from-source path installs with --ignore-scripts — but skipping the build leaves
+# a module that throws MODULE_NOT_FOUND the moment `next build` evaluates a page
+# that reaches it, and the build dies collecting page data. In a Debian image
+# there is no reason not to just compile it.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates \
+    && apt-get install -y --no-install-recommends \
+       git ca-certificates build-essential python3 cmake pkg-config \
     && rm -rf /var/lib/apt/lists/* \
     && corepack enable
 
@@ -69,10 +76,11 @@ ENV npm_config_store_dir=/pnpm-store \
     npm_config_fetch_timeout=600000 \
     npm_config_network_concurrency=4
 RUN --mount=type=cache,target=/pnpm-store,sharing=locked \
-    pnpm install --ignore-scripts --frozen-lockfile
+    pnpm install --frozen-lockfile
 
-# --ignore-scripts above also skips Blockscout's postinstall, which is Chakra's
-# typegen. Without it every recipe variant the theme defines — status="warning_table",
+# Blockscout's postinstall is Chakra's typegen, so with install scripts enabled
+# this has already run. Repeating it is cheap and keeps the dependency visible:
+# without those types every recipe variant the theme defines — status="warning_table",
 # variant="header" and friends — is unknown to TypeScript and the build fails
 # typechecking on upstream's own code.
 RUN pnpm chakra:typegen
@@ -84,18 +92,42 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # with no icons at all. Blockscout's own build:next also downloads external asset
 # configs — skipped here, since a local devnet has no marketplace or branding to
 # fetch and it would make the image build depend on a third-party host.
-# Blockscout's own Dockerfile raises the heap to 8 GB for this build; it OOMs at
-# Node's default. Kept a little lower so it fits a stock Docker Desktop (which
-# hands out about 8 GB in total) — raise it if your machine has room.
-ARG NODE_HEAP_MB=6144
+# Blockscout's own Dockerfile raises the heap to 8 GB; at Node's default this
+# build dies with SIGABRT. Most of the work is Turbopack's, whose memory is
+# native rather than V8 heap, so the number here mainly has to leave the VM room
+# — 6 GB got the whole container OOM-killed on a stock 8 GB Docker Desktop.
+# Raise it with --build-arg NODE_HEAP_MB=8192 if Docker has more to give.
+ARG NODE_HEAP_MB=4096
 ENV NODE_OPTIONS="--max-old-space-size=${NODE_HEAP_MB}"
 
 # routes:generate rewrites the typed route map. The committed one does not know
 # about the /devnet pages this overlay adds, and several upstream files are typed
 # as a Record over every route.
+# Bundler choice is a memory trade-off, not a preference. Blockscout builds with
+# Turbopack, which is faster but allocates natively and outside V8's control —
+# on an 8 GB Docker Desktop it gets the whole container OOM-killed regardless of
+# the heap above. Webpack is slower and stays inside the budget. Pass
+# --build-arg NEXT_BUNDLER=turbopack on a roomier machine.
+# Next fans page-data collection out to one worker per CPU — fifteen here, each
+# free to take the heap above. That is what finally exhausts the VM, after the
+# bundle has already compiled. There is no environment variable for it, so the
+# knob has to be written into the config; the build fails loudly if upstream ever
+# moves the anchor, rather than quietly going back to fifteen.
+ARG NEXT_BUILD_CPUS=2
+ENV NEXT_BUILD_CPUS=${NEXT_BUILD_CPUS}
+RUN node -e "\
+const fs = require('fs'); \
+const file = 'next.config.js'; \
+const source = fs.readFileSync(file, 'utf8'); \
+const anchor = 'experimental: {'; \
+if (!source.includes(anchor)) { throw new Error('next.config.js has no experimental block to cap cpus in'); } \
+fs.writeFileSync(file, source.replace(anchor, anchor + '\n    cpus: Number(process.env.NEXT_BUILD_CPUS) || 2,')); \
+"
+
+ARG NEXT_BUNDLER=webpack
 RUN pnpm svg:build-sprite \
     && pnpm routes:generate \
-    && pnpm run build
+    && sh -c 'if [ "$NEXT_BUNDLER" = "webpack" ]; then pnpm exec next build --webpack; else pnpm run build; fi'
 
 # ── runtime ──────────────────────────────────────────────────────────────────
 FROM node:22-slim AS runtime
@@ -107,15 +139,21 @@ RUN apt-get update \
 
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
-    PORT=3000
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
 
-COPY --from=build /app ./
+# Blockscout's next.config sets output: "standalone", which emits a server with
+# only the modules it actually reaches. Copying the whole build stage instead
+# would drag in 2.7 GB of node_modules and the C++ toolchain for a 639 MB app.
+COPY --from=build /app/.next/standalone ./
+COPY --from=build /app/.next/static ./.next/static
+COPY --from=build /app/public ./public
 
 # Blockscout hands the browser its configuration through window.__envs, written
 # at container start from the NEXT_PUBLIC_* environment. Without this the app
-# boots with no API host, no chain and no features — `next start` alone is not
-# enough. The rest of Blockscout's entrypoint (asset downloads, favicon and OG
-# image generation, sitemaps) is for a public deployment and is skipped.
+# boots with no API host, no chain and no features. The rest of Blockscout's
+# entrypoint (asset downloads, favicon and OG image generation, sitemaps) is for
+# a public deployment and is skipped.
 COPY --from=build /app/deploy/scripts/make_envs_script.sh /usr/local/bin/write-envs.sh
 
 EXPOSE 3000
@@ -123,4 +161,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=10 \
   CMD curl -fsS http://127.0.0.1:3000/ || exit 1
 
-CMD ["sh", "-c", "/usr/local/bin/write-envs.sh ./public/assets/envs.js && exec node_modules/.bin/next start -p ${PORT}"]
+# `next start` refuses to run against a standalone build; server.js is the entry.
+CMD ["sh", "-c", "/usr/local/bin/write-envs.sh ./public/assets/envs.js && exec node server.js"]
