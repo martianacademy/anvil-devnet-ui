@@ -288,16 +288,43 @@ a wallet is given, and the WebSocket scheme:
 ./devnet.sh local               # http://localhost:3000
 ./devnet.sh expose              # http://<your-lan-ip>:3000  (auto-detected)
 ./devnet.sh expose 192.168.1.42 # …or name the address yourself
-./devnet.sh tunnel              # https://<random>.trycloudflare.com
+./devnet.sh proxy               # http://localhost:8000 — one origin for everything
+./devnet.sh tunnel              # https://<random>.trycloudflare.com, one origin
 ```
 
 `status` shows which one is in effect, straight from what the explorer is serving.
 
+### One origin
+
+`local` and `expose` put the explorer, the Blockscout API and the RPC on three different ports. That
+works on a LAN, and it is why `localhost:3000` breaks while exposed: the page and the API end up on
+different origins and the browser calls it cross-origin.
+
+`proxy` puts all three behind one address:
+
+```
+http://localhost:8000/           the explorer and /devnet
+http://localhost:8000/api/v2     Blockscout
+http://localhost:8000/rpc        the JSON-RPC a wallet uses
+```
+
+A small nginx (`devnet-proxy`) serves `/rpc` and hands everything else to Blockscout's own nginx,
+which already separates `/api` and `/socket` — and which now serves this fork at `/` instead of the
+stock frontend. Blockscout's config is not modified or copied; it is reached through.
+
+Same origin means no CORS anywhere, so the "use the LAN address, never localhost" caveat disappears.
+It is also the shape a cloud deployment behind a reverse proxy takes, so the same values carry over
+to a real domain.
+
+`/rpc` goes to the control API's screening proxy, not to Anvil directly, so a shared URL cannot call
+`anvil_*`, `evm_*` or `hardhat_*` while `DEVNET_READONLY=1`. Set `DEVNET_RPC_PROXY_PASS` to
+`http://devnet-api:8545` when you want the raw node.
+
 ### Tunnel mode
 
-`tunnel` opens three Cloudflare quick tunnels — the explorer, the Blockscout API and the RPC — and
-points the explorer at all three. Three, because a quick tunnel maps one hostname to one port and the
-browser reaches three different services. It needs `cloudflared` (`brew install cloudflared`).
+`tunnel` switches to one origin first, then opens a single Cloudflare quick tunnel in front of it —
+so the explorer, the API and the RPC all live under one HTTPS hostname. It needs `cloudflared`
+(`brew install cloudflared`).
 
 Two things it fixes that a LAN address cannot: wallets that refuse a plain-HTTP RPC endpoint, and
 people who are not on your network at all. The URLs are HTTPS with no port, which is also what a

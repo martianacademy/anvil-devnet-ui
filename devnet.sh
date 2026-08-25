@@ -8,6 +8,7 @@
 #   ./devnet.sh logs        tail the control API + explorer logs
 #   ./devnet.sh local       address everything as localhost
 #   ./devnet.sh expose [ip] address everything as your LAN address
+#   ./devnet.sh proxy       put the explorer, the API and the RPC on one origin
 #   ./devnet.sh tunnel      address everything as public HTTPS (Cloudflare)
 #   ./devnet.sh fork <url>  fork a chain and reindex the explorer for it
 #
@@ -39,6 +40,8 @@ export DEVNET_API_PORT="${DEVNET_API_PORT:-3010}"
 # Blockscout indexes from here; a fork must set it or the catchup indexer walks
 # every block from genesis.
 export DEVNET_FIRST_BLOCK="${DEVNET_FIRST_BLOCK:-0}"
+# Port the single-origin front door listens on (devnet.sh proxy / tunnel).
+export DEVNET_PROXY_PORT="${DEVNET_PROXY_PORT:-8000}"
 
 # --docker anywhere in the arguments runs everything in containers.
 DOCKER_MODE=0
@@ -460,6 +463,53 @@ cmd_fork() {
   echo "Only blocks from $fork_block onwards are indexed; history stays on the upstream chain."
 }
 
+# ── single origin ────────────────────────────────────────────────────────────
+#
+# One hostname for the explorer, the Blockscout API and the RPC. `devnet-proxy`
+# serves /rpc itself and hands everything else to Blockscout's nginx, which
+# already splits /api and /socket from the rest — and which now serves this fork
+# at "/" rather than the stock frontend.
+#
+# Worth it beyond tidiness: same-origin means no CORS at all, so the "open it on
+# the LAN address, never localhost" caveat disappears, and a tunnel needs one
+# hostname instead of three. It is also the shape a cloud deployment behind a
+# reverse proxy takes, so the config carries over unchanged.
+single_origin_up() {
+  [ "$DOCKER_MODE" = "1" ] || {
+    echo "🚨 Single origin needs the container path — add --docker." >&2; exit 1; }
+  # --pull missing, not never: nginx:alpine is a public base image and may not be
+  # here yet, unlike the images this project builds.
+  compose up -d --no-deps --pull missing devnet-proxy >/dev/null
+  # Blockscout's nginx has to be recreated to pick up FRONT_PROXY_PASS.
+  compose up -d --force-recreate --no-deps --pull never proxy >/dev/null
+  wait_for "http://localhost:$DEVNET_PROXY_PORT/" "single-origin proxy" 60
+}
+
+cmd_proxy() {
+  mkdir -p "$LOG_DIR"
+  stop_tunnels
+  local chain
+  chain="$(active_node_chain)"
+
+  echo "→ routing everything through one origin on port $DEVNET_PROXY_PORT"
+  single_origin_up
+  apply_public_config http localhost "$DEVNET_PROXY_PORT" http localhost "$DEVNET_PROXY_PORT" ws \
+    "http://localhost:$DEVNET_PROXY_PORT/rpc"
+
+  echo
+  echo "One address for everything:"
+  echo "  Explorer:  http://localhost:$DEVNET_PROXY_PORT"
+  echo "  DevNet:    http://localhost:$DEVNET_PROXY_PORT/devnet"
+  echo "  API:       http://localhost:$DEVNET_PROXY_PORT/api/v2"
+  echo "  RPC:       http://localhost:$DEVNET_PROXY_PORT/rpc     (chain id $chain)"
+  echo
+  echo "  The RPC goes through the control API, which refuses anvil_*, evm_* and"
+  echo "  hardhat_* while DEVNET_READONLY=1. Point DEVNET_RPC_PROXY_PASS at"
+  echo "  http://devnet-api:8545 for the raw node."
+  echo
+  echo "  Tunnel this one port to share it: ./devnet.sh tunnel${DOCKER_SUFFIX}"
+}
+
 # ── tunnel mode ──────────────────────────────────────────────────────────────
 #
 # Three separate hostnames, because the browser reaches three different services
@@ -509,33 +559,38 @@ cmd_tunnel() {
   mkdir -p "$LOG_DIR"
   stop_tunnels
 
-  local port chain ui_url api_url rpc_url
-  port="$(active_node_port)"; chain="$(active_node_chain)"
+  local chain url
+  chain="$(active_node_chain)"
 
-  echo "→ opening tunnels (explorer, Blockscout API, RPC)"
-  ui_url="$(start_tunnel ui http://localhost:3000)" || exit 1
-  api_url="$(start_tunnel api http://localhost:80)" || exit 1
-  rpc_url="$(start_tunnel rpc "http://localhost:$port")" || exit 1
+  # One tunnel, because everything is behind one origin. A quick tunnel maps one
+  # hostname to one port, so without this it would take three of them — and three
+  # hostnames that have to agree with each other.
+  echo "→ routing everything through one origin on port $DEVNET_PROXY_PORT"
+  single_origin_up
 
-  # Ports are empty on purpose: a tunnel answers on 443 and the scheme carries it.
-  echo "→ addressing the explorer as $ui_url"
-  apply_public_config https "${ui_url#https://}" "" https "${api_url#https://}" "" wss "$rpc_url"
+  echo "→ opening the tunnel"
+  url="$(start_tunnel devnet "http://localhost:$DEVNET_PROXY_PORT")" || exit 1
+
+  # No port: a tunnel answers on 443 and the scheme carries it.
+  echo "→ addressing the explorer as $url"
+  apply_public_config https "${url#https://}" "" https "${url#https://}" "" wss "$url/rpc"
 
   echo
-  echo "Public — anyone with these URLs, from anywhere:"
-  echo "  Explorer:  $ui_url"
-  echo "  RPC:       $rpc_url     (chain id $chain)"
-  echo "  API:       $api_url/api/v2"
+  echo "Public — anyone with this URL, from anywhere:"
+  echo "  Explorer:  $url"
+  echo "  DevNet:    $url/devnet"
+  echo "  API:       $url/api/v2"
+  echo "  RPC:       $url/rpc     (chain id $chain)"
   echo
-  echo "  Open the explorer at the tunnel URL, not localhost — the bundle now"
-  echo "  calls its API on $api_url."
+  echo "  Same origin throughout, so this address works from your machine too."
   echo
-  echo "⚠️  This is the public internet, and the RPC exposes Anvil's admin methods:"
-  echo "    anyone with the RPC URL can set balances, overwrite code and impersonate"
-  echo "    accounts. Share it only with people you would give the chain to."
-  echo "    Stop everything with: ./devnet.sh local${DOCKER_SUFFIX}"
+  echo "⚠️  This is the public internet. The RPC is screened only while the control"
+  echo "    API runs read-only — otherwise anyone with the URL can set balances and"
+  echo "    overwrite code. For a shared link:"
+  echo "      ./devnet.sh down${DOCKER_SUFFIX} && DEVNET_READONLY=1 ./devnet.sh up${DOCKER_SUFFIX} && ./devnet.sh tunnel${DOCKER_SUFFIX}"
   echo
-  echo "  Quick tunnels get a new hostname every restart; these URLs are not stable."
+  echo "  Quick tunnels get a new hostname every restart. Close it with:"
+  echo "      ./devnet.sh local${DOCKER_SUFFIX}"
 }
 
 cmd_local() {
@@ -556,6 +611,7 @@ case "${1:-up}" in
   logs) cmd_logs ;;
   expose) cmd_expose "${2:-}" ;;
   local) cmd_local ;;
+  proxy) cmd_proxy ;;
   tunnel) cmd_tunnel ;;
   fork) cmd_fork "${2:-}" "${3:-}" ;;
   *) sed -n '2,15p' "$0"; exit 1 ;;

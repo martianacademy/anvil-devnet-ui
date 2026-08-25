@@ -1,0 +1,56 @@
+# Named default.conf.template on purpose: the nginx image renders templates into
+# /etc/nginx/conf.d, where its own default.conf already claims port 80 and wins.
+# Only by taking that filename does this replace it rather than sit beside it.
+#
+# Single-origin front door: one hostname serves the explorer, the Blockscout API
+# and the JSON-RPC endpoint, so a wallet, a browser and a tunnel all need exactly
+# one address between them.
+#
+# This sits in front of Blockscout's own nginx rather than replacing it. That
+# nginx already splits /api and /socket from the rest, and its config is part of
+# Blockscout — which may not be redistributed — so it is left untouched and
+# reached through it. Only the two things it does not know about live here.
+
+map $http_upgrade $devnet_connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    # Bodies are small, but an opcode trace response is not; and a slow trace
+    # must not be cut off mid-flight.
+    client_max_body_size 10m;
+    proxy_read_timeout 120s;
+    proxy_buffering off;
+
+    # The wallet's RPC endpoint. Pointed at the control API's screening proxy by
+    # default, not at Anvil directly: that one refuses anvil_*, evm_* and
+    # hardhat_* when DEVNET_READONLY is set, so a shared URL cannot rewrite
+    # balances or overwrite code. Set DEVNET_RPC_PROXY_PASS to the node itself
+    # when you do want the admin methods.
+    location /rpc {
+        proxy_pass            ${RPC_PROXY_PASS};
+        proxy_http_version    1.1;
+        proxy_set_header      Host $host;
+        proxy_set_header      X-Real-IP $remote_addr;
+        proxy_set_header      X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header      X-Forwarded-Proto $scheme;
+    }
+
+    # Everything else — the explorer, /devnet, /api/v2, /socket — is Blockscout's
+    # nginx's job, and it routes them to the frontend or the backend itself.
+    location / {
+        proxy_pass            ${STACK_PROXY_PASS};
+        proxy_http_version    1.1;
+        proxy_set_header      Host $host;
+        proxy_set_header      X-Real-IP $remote_addr;
+        proxy_set_header      X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header      X-Forwarded-Proto $scheme;
+        proxy_set_header      Upgrade $http_upgrade;
+        proxy_set_header      Connection $devnet_connection_upgrade;
+        proxy_cache_bypass    $http_upgrade;
+    }
+}

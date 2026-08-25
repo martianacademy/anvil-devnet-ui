@@ -50,6 +50,13 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - "${DEVNET_COMPOSE_DIR}:${DEVNET_COMPOSE_DIR}"
 
+  # Blockscout's own nginx sends "/" to whatever FRONT_PROXY_PASS names. Pointing
+  # it at this fork is what puts the explorer and the /devnet pages on the same
+  # origin as /api/v2, instead of on their own port.
+  proxy:
+    environment:
+      FRONT_PROXY_PASS: http://devnet-ui:3000
+
   devnet-ui:
     build:
       context: "${DEVNET_REPO_DIR}"
@@ -92,6 +99,24 @@ services:
       NEXT_PUBLIC_IS_ACCOUNT_SUPPORTED: "false"
       # Server-side only: the UI proxies /api/devnet/* over the compose network.
       DEVNET_API_URL: http://devnet-api:3010
+
+  # Single-origin front door, used by `devnet.sh proxy` and `devnet.sh tunnel`.
+  # Harmless when unused: it just forwards to Blockscout's nginx.
+  devnet-proxy:
+    image: nginx:alpine
+    container_name: devnet-proxy
+    restart: unless-stopped
+    depends_on:
+      - devnet-api
+    ports:
+      - "${DEVNET_PROXY_PORT:-8000}:80"
+    environment:
+      STACK_PROXY_PASS: http://proxy:80
+      # The control API screens out state-changing RPC methods when it runs
+      # read-only; point this at http://devnet-api:8545 for raw Anvil instead.
+      RPC_PROXY_PASS: "${DEVNET_RPC_PROXY_PASS:-http://devnet-api:3010/api/rpc}"
+    volumes:
+      - "${DEVNET_REPO_DIR}/stack/docker-compose/proxy:/etc/nginx/templates:ro"
 
 volumes:
   devnet-data:
