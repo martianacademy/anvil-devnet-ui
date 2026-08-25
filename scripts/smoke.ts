@@ -180,6 +180,25 @@ await step("native funding sets a balance outright", async () => {
     assert.equal(BigInt(balance), 12345n * 10n ** 18n);
 });
 
+await step("a funded address lands in a block, so an explorer can see it", async () => {
+    // anvil_setBalance touches no block, and Blockscout reads balances out of the
+    // blocks it indexes — without this the balance is right on chain and missing
+    // in the explorer.
+    const address = "0x976EA74026E726554dB657fA54763abd0C3a0aa9";
+    const before = await rpc<string>("eth_blockNumber", []);
+    await api("/patches/fund", {
+        method: "POST",
+        body: JSON.stringify({ type: "native", address, amount: "500" }),
+    });
+
+    const block = await rpc<{ transactions: Array<{ to: string | null }> }>(
+        "eth_getBlockByNumber", [ "latest", true ],
+    );
+    const touched = block.transactions.some((tx) => tx.to?.toLowerCase() === address.toLowerCase());
+    assert.ok(touched, "the funded address should appear as a recipient in the latest block");
+    assert.ok(BigInt(await rpc<string>("eth_blockNumber", [])) >= BigInt(before), "chain should have advanced");
+});
+
 await step("storage slots round-trip", async () => {
     const value = `0x${"0".repeat(63)}7`;
     await api("/patches/storage", {

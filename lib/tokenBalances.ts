@@ -207,6 +207,33 @@ async function ensureContractExists(
 }
 
 /**
+ * Make the explorer aware of a token and a holder.
+ *
+ * Blockscout discovers tokens from Transfer events in indexed blocks, then reads
+ * balances with `balanceOf`. Writing a mapping slot emits nothing, so a patched
+ * balance is correct on chain and the token does not exist as far as the
+ * explorer is concerned. A real zero-value transfer to the holder emits the
+ * event that starts that discovery, without moving anyone's funds.
+ *
+ * Best effort: a token that reverts on a zero-value transfer, or a chain with no
+ * unlocked accounts, simply does not get the announcement.
+ */
+async function announceToken(tokenAddress: string, holder: string, port?: number): Promise<void> {
+    try {
+        const accounts = await rpc<string[]>("eth_accounts", [], port);
+        const sender = accounts?.[0];
+        if (!sender) return;
+
+        // transfer(address,uint256) with value 0 — Transfer(sender, holder, 0).
+        const data = `0xa9059cbb${pad32(holder)}${"0".repeat(64)}`;
+        await rpc("eth_sendTransaction", [ { from: sender, to: tokenAddress, data } ], port);
+        await rpc("anvil_mine", [ "0x1" ], port).catch(() => { });
+    } catch {
+        /* the balance is already written; announcing it is a convenience */
+    }
+}
+
+/**
  * Force a holder's token balance by writing the mapping slot directly.
  * Slot resolution order: explicit `mappingSlot` → known slot of the injected mock →
  * auto-detection → slot 0.
@@ -217,11 +244,15 @@ export async function setTokenBalance(
     amount: bigint,
     port?: number,
     mappingSlot?: number,
-    decimals = 18
+    decimals = 18,
+    announce = true
 ): Promise<void> {
     const injected = await ensureContractExists(tokenAddress, walletAddress, amount, decimals, port);
     // The constructor already credited the holder and set totalSupply to match.
-    if (injected) return;
+    if (injected) {
+        if (announce) await announceToken(tokenAddress, walletAddress, port);
+        return;
+    }
 
     let slot = mappingSlot ?? MOCK_ERC20_BALANCE_SLOT;
     if (mappingSlot === undefined) {
@@ -233,4 +264,5 @@ export async function setTokenBalance(
     }
 
     await rpc("anvil_setStorageAt", [tokenAddress, solidityMappingKey(walletAddress, slot), toWord(amount)], port);
+    if (announce) await announceToken(tokenAddress, walletAddress, port);
 }

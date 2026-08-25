@@ -115,13 +115,23 @@ ENV NODE_OPTIONS="--max-old-space-size=${NODE_HEAP_MB}"
 # moves the anchor, rather than quietly going back to fifteen.
 ARG NEXT_BUILD_CPUS=2
 ENV NEXT_BUILD_CPUS=${NEXT_BUILD_CPUS}
+# The second edit is a separate problem with the same remedy. `output: standalone`
+# ships only the modules Next's tracer can follow, and the webpack tracer does not
+# see interface-datastore, which @libp2p/config imports dynamically. The server
+# then throws ERR_MODULE_NOT_FOUND rendering any page that reaches the wallet
+# stack — /address/… among them — and returns a 500. Upstream builds with
+# Turbopack, whose trace does find it.
 RUN node -e "\
 const fs = require('fs'); \
 const file = 'next.config.js'; \
-const source = fs.readFileSync(file, 'utf8'); \
-const anchor = 'experimental: {'; \
-if (!source.includes(anchor)) { throw new Error('next.config.js has no experimental block to cap cpus in'); } \
-fs.writeFileSync(file, source.replace(anchor, anchor + '\n    cpus: Number(process.env.NEXT_BUILD_CPUS) || 2,')); \
+let source = fs.readFileSync(file, 'utf8'); \
+const patch = (anchor, addition, what) => { \
+  if (!source.includes(anchor)) { throw new Error('next.config.js has no ' + what); } \
+  source = source.replace(anchor, anchor + addition); \
+}; \
+patch('experimental: {', '\n    cpus: Number(process.env.NEXT_BUILD_CPUS) || 2,', 'experimental block to cap cpus in'); \
+patch(\"'/**': [\", \" './node_modules/.pnpm/interface-datastore@*/**',\", 'outputFileTracingIncludes entry to extend'); \
+fs.writeFileSync(file, source); \
 "
 
 ARG NEXT_BUNDLER=webpack

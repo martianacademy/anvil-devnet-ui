@@ -478,12 +478,18 @@ curl -X POST http://localhost:3010/api/anvil/start \
 | `POST` | `/api/patches/code` | `{ address, mode: "erc20", name, symbol, decimals?, totalSupply?, holder? }` | Install the built-in ERC-20 at an address |
 | `POST` | `/api/patches/code` | `{ address, mode: "creation", bytecode, constructorArgs? }` | Run your constructor and install what it deploys |
 | `POST` | `/api/patches/code` | `{ address, mode: "runtime", bytecode }` | Write runtime bytecode verbatim |
-| `POST` | `/api/patches/fund` | `{ type: "native", address, amount }` | Set an ETH balance |
-| `POST` | `/api/patches/fund` | `{ type: "erc20", token, address, amount, decimals?, mappingSlot? }` | Set an ERC-20 balance |
+| `POST` | `/api/patches/fund` | `{ type: "native", address, amount, announce? }` | Set an ETH balance |
+| `POST` | `/api/patches/fund` | `{ type: "erc20", token, address, amount, decimals?, mappingSlot?, announce? }` | Set an ERC-20 balance |
 | `GET` | `/api/patches/storage` | `?contract=0x…&slot=0x0` | Read a storage slot |
 | `POST` | `/api/patches/storage` | `{ contract, slot, value }` | Write a storage slot |
 | `GET` / `POST` | `/api/patches/scripts` | `{ action: "save" \| "run" \| "delete", … }` | Save and replay batches of patches |
 | `GET` / `POST` / `PATCH` / `DELETE` | `/api/patches/profiles` | `{ name, chainId, forkUrl, … }` | Saved fork profiles (presets: Ethereum, BSC, opBNB, local) |
+
+Both patches write state directly, which no block records — so the explorer would keep showing the
+old balance, or nothing at all. Each one therefore ends with a zero-value transaction that puts the
+address (and, for a token, a `Transfer` event) into the next block, which is what makes Blockscout
+look. It is sent *to* the address, so the funded account's own nonce is untouched and a dev account
+pays the gas. Pass `"announce": false` to skip it when a test is counting blocks.
 
 ```bash
 # 1,000 ETH for a test wallet

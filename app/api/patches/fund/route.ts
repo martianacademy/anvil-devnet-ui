@@ -14,7 +14,9 @@ export async function POST(req: Request) {
         const amount = assertAmount(body.amount, "amount");
 
         if (body.type === "native") {
-            await fundNative(address, amount, active.port);
+            // `announce: false` skips the zero-value transaction that makes the
+            // explorer notice the new balance — useful when a test counts blocks.
+            await fundNative(address, amount, active.port, body.announce !== false);
         } else if (body.type === "erc20") {
             const token = assertAddress(body.token, "token");
             const decimals = assertInt(body.decimals ?? 18, "decimals", 0, 36);
@@ -22,7 +24,9 @@ export async function POST(req: Request) {
                 ? undefined
                 : assertInt(body.mappingSlot, "mappingSlot", 0, 200);
             // parseUnits keeps full precision — float math loses it above ~15 digits.
-            await setTokenBalance(token, address, parseUnits(amount, decimals), active.port, mappingSlot, decimals);
+            await setTokenBalance(
+                token, address, parseUnits(amount, decimals), active.port, mappingSlot, decimals, body.announce !== false,
+            );
         } else {
             throw new ValidationError(`Unknown fund type: ${body.type}`);
         }
