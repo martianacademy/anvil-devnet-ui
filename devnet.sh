@@ -326,6 +326,18 @@ apply_public_config() { # app_proto app_host app_port api_proto api_host api_por
     write_frontend_env
   fi
   wait_for "http://localhost:3000/" "explorer ui" 90
+  refresh_front_door
+}
+
+# nginx resolves an upstream hostname once, at startup, and then holds that
+# address. Recreating the explorer or the control API hands them new ones, and
+# the front door keeps dialling the old — 502 on /rpc and /api/devnet while the
+# explorer itself still works, because that one it reaches through a container
+# that did not move.
+refresh_front_door() {
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -qx devnet-proxy || return 0
+  docker restart devnet-proxy >/dev/null 2>&1 || true
+  wait_for "http://localhost:$DEVNET_PROXY_PORT/" "front door" 30 || true
 }
 
 # The from-source path keeps its values in .env.local and runs its own dev server.
