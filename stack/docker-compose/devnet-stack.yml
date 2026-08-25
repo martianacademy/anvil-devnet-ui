@@ -66,14 +66,20 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # Read by the browser, so these must be addresses the browser can reach.
-      NEXT_PUBLIC_APP_PROTOCOL: http
+      # Read by the browser, so every one of these has to be an address the
+      # visitor's browser can reach — not one that only resolves on this machine.
+      # `devnet.sh local|expose|tunnel` is what fills them in.
+      #
+      # The port variables use ${VAR-default} rather than ${VAR:-default}: behind
+      # a tunnel or a reverse proxy the port belongs to the scheme and must be
+      # empty, and the single dash keeps a deliberate empty value.
+      NEXT_PUBLIC_APP_PROTOCOL: "${DEVNET_PUBLIC_PROTOCOL:-http}"
       NEXT_PUBLIC_APP_HOST: "${DEVNET_PUBLIC_HOST:-localhost}"
-      NEXT_PUBLIC_APP_PORT: "3000"
-      NEXT_PUBLIC_API_PROTOCOL: http
-      NEXT_PUBLIC_API_HOST: "${DEVNET_PUBLIC_HOST:-localhost}"
-      NEXT_PUBLIC_API_PORT: "80"
-      NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: ws
+      NEXT_PUBLIC_APP_PORT: "${DEVNET_PUBLIC_PORT-3000}"
+      NEXT_PUBLIC_API_PROTOCOL: "${DEVNET_API_PROTOCOL:-http}"
+      NEXT_PUBLIC_API_HOST: "${DEVNET_API_PUBLIC_HOST:-localhost}"
+      NEXT_PUBLIC_API_PORT: "${DEVNET_API_PUBLIC_PORT-80}"
+      NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: "${DEVNET_WS_PROTOCOL:-ws}"
       NEXT_PUBLIC_NETWORK_ID: "${DEVNET_CHAIN_ID:-31337}"
       # Overridden when the explorer follows the node onto a different chain, so a
       # devnet on chain 56 says BNB rather than Ether.
@@ -82,7 +88,7 @@ services:
       NEXT_PUBLIC_NETWORK_CURRENCY_NAME: "${DEVNET_CURRENCY_NAME:-Ether}"
       NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: "${DEVNET_CURRENCY_SYMBOL:-ETH}"
       NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: "18"
-      NEXT_PUBLIC_NETWORK_RPC_URL: "http://${DEVNET_PUBLIC_HOST:-localhost}:${DEVNET_RPC_PORT:-8546}"
+      NEXT_PUBLIC_NETWORK_RPC_URL: "${DEVNET_PUBLIC_RPC_URL:-http://localhost:8546}"
       NEXT_PUBLIC_IS_ACCOUNT_SUPPORTED: "false"
       # Server-side only: the UI proxies /api/devnet/* over the compose network.
       DEVNET_API_URL: http://devnet-api:3010

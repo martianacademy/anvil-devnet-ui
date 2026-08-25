@@ -170,8 +170,9 @@ here — see [Licence and attribution](#licence-and-attribution).
 ./devnet.sh logs        # tail anvil + control API + UI logs
 ./devnet.sh down        # stop the UI, the control API and the containers
 ./devnet.sh reset       # wipe the index and the devnet state, then start fresh
-./devnet.sh expose      # serve the UI and RPC to your local network
-./devnet.sh local       # point everything back at localhost
+./devnet.sh local       # address everything as localhost
+./devnet.sh expose      # address everything as your LAN address
+./devnet.sh tunnel      # address everything as public HTTPS (Cloudflare)
 ./devnet.sh fork <url>  # reset into a fork, with the indexer pinned to the fork height
 
 ./devnet.sh up --docker # …any of the above, with everything in containers
@@ -273,19 +274,41 @@ want on a devnet — and public RPCs are unreliable enough that Anvil can panic 
 
 ---
 
-## Sharing it on your network
+## Sharing it: three addresses, one switch
 
-Teammates on the same Wi-Fi can point MetaMask at your chain and browse it in the explorer:
+Every service already listens on all interfaces. What decides whether someone else can use the
+explorer is a different thing entirely: the `NEXT_PUBLIC_*` URLs it hands to a browser. A visitor's
+browser runs that bundle, so while it says `localhost`, that browser looks for the API on *its own*
+machine and everything fails.
+
+Three commands set that whole group consistently — the app's own origin, the Blockscout API, the RPC
+a wallet is given, and the WebSocket scheme:
 
 ```bash
-./devnet.sh expose              # auto-detects your LAN address
-./devnet.sh expose 192.168.1.42 # or name it yourself
+./devnet.sh local               # http://localhost:3000
+./devnet.sh expose              # http://<your-lan-ip>:3000  (auto-detected)
+./devnet.sh expose 192.168.1.42 # …or name the address yourself
+./devnet.sh tunnel              # https://<random>.trycloudflare.com
 ```
 
-Every service already listens on all interfaces; what `expose` changes is the explorer's baked-in
-`NEXT_PUBLIC_*` URLs. They are compiled into the bundle a visitor's browser runs, so while they say
-`localhost` that browser looks for the API on *its own* machine and everything fails. `expose`
-rewrites them to your address and restarts the UI.
+`status` shows which one is in effect, straight from what the explorer is serving.
+
+### Tunnel mode
+
+`tunnel` opens three Cloudflare quick tunnels — the explorer, the Blockscout API and the RPC — and
+points the explorer at all three. Three, because a quick tunnel maps one hostname to one port and the
+browser reaches three different services. It needs `cloudflared` (`brew install cloudflared`).
+
+Two things it fixes that a LAN address cannot: wallets that refuse a plain-HTTP RPC endpoint, and
+people who are not on your network at all. The URLs are HTTPS with no port, which is also what a
+cloud deployment behind a reverse proxy looks like.
+
+It defaults to `--protocol http2`. cloudflared prefers QUIC, and a network that blocks UDP/7844 —
+phone hotspots often do — leaves the tunnel retrying forever behind Cloudflare's error 1033.
+Override with `DEVNET_TUNNEL_PROTOCOL`.
+
+Quick tunnels get a new hostname on every restart, so these URLs are not stable. `./devnet.sh local`
+closes them and puts everything back.
 
 | Share this | For |
 | --- | --- |

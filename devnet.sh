@@ -6,8 +6,9 @@
 #   ./devnet.sh reset       wipe the indexer database and reindex from a fresh chain
 #   ./devnet.sh status      show what is running
 #   ./devnet.sh logs        tail the control API + explorer logs
-#   ./devnet.sh expose [ip] serve the UI and RPC to your local network
-#   ./devnet.sh local       point everything back at localhost
+#   ./devnet.sh local       address everything as localhost
+#   ./devnet.sh expose [ip] address everything as your LAN address
+#   ./devnet.sh tunnel      address everything as public HTTPS (Cloudflare)
 #   ./devnet.sh fork <url>  fork a chain and reindex the explorer for it
 #
 # Add --docker to `up`, `down`, `reset` or `status` to run the control API, the
@@ -49,6 +50,9 @@ set -- "${ARGS[@]+"${ARGS[@]}"}"
 
 # Both are read by stack/docker-compose/devnet-stack.yml.
 export DEVNET_COMPOSE_DIR="$COMPOSE_DIR"
+# Echoed back in hints so copy-pasted commands keep the mode the user is in.
+DOCKER_SUFFIX=""
+[ "$DOCKER_MODE" = "1" ] && DOCKER_SUFFIX=" --docker"
 export DEVNET_REPO_DIR="$CONTROL_DIR"
 
 # The containerised control API cannot see this machine's LAN address, so hand it over.
@@ -214,16 +218,31 @@ cmd_status() {
   printf 'explorer ui:  '
   curl -sf -m 3 -o /dev/null "http://localhost:3000/" && echo "up" || echo "down"
 
+  # What the explorer is telling browsers right now, straight from what it serves.
+  local envs app_host api_host rpc
+  envs="$(curl -sf -m 3 http://localhost:3000/assets/envs.js 2>/dev/null || true)"
+  app_host="$(printf '%s' "$envs" | sed -n 's/.*NEXT_PUBLIC_APP_HOST: "\([^"]*\)".*/\1/p' | head -1)"
+  api_host="$(printf '%s' "$envs" | sed -n 's/.*NEXT_PUBLIC_API_HOST: "\([^"]*\)".*/\1/p' | head -1)"
+  rpc="$(printf '%s' "$envs" | sed -n 's/.*NEXT_PUBLIC_NETWORK_RPC_URL: "\([^"]*\)".*/\1/p' | head -1)"
+  if [ -n "$app_host" ]; then
+    echo
+    echo "  Addressed as — what the explorer tells a browser to call:"
+    printf '  %-13s %s\n' "explorer" "$app_host"
+    printf '  %-13s %s\n' "blockscout" "$api_host"
+    printf '  %-13s %s\n' "rpc" "$rpc"
+  fi
+
   local ip
   ip="$(detect_lan_ip)"
   if [ -n "$ip" ]; then
     echo
-    printf '  %-13s %-28s %s\n' "" "On this machine" "On your network"
+    echo "  Listening on:"
+    printf '  %-13s %-28s %s\n' "" "this machine" "your network"
     printf '  %-13s %-28s %s\n' "Explorer" "http://localhost:3000" "http://$ip:3000"
     printf '  %-13s %-28s %s\n' "RPC" "http://127.0.0.1:$node_port" "http://$ip:$node_port"
     printf '  %-13s %-28s %s\n' "Explorer API" "http://localhost/api/v2" "http://$ip/api/v2"
     echo
-    echo "  The network column needs ./devnet.sh expose — the explorer bakes its URLs in."
+    echo "  Switch addressing with: ./devnet.sh local|expose|tunnel${DOCKER_SUFFIX}"
   fi
 
   echo
@@ -258,63 +277,72 @@ detect_lan_ip() {
   echo "$ip"
 }
 
-# The explorer bakes NEXT_PUBLIC_* values into the bundle, so a visitor's browser
-# uses whatever host is written here — "localhost" would resolve to their machine.
-set_public_host() {
-  local host="$1"
-  local env_file="$FRONTEND_DIR/.env.local"
+# ── how the explorer is addressed from outside ───────────────────────────────
+#
+# `local`, `expose` and `tunnel` are the same operation with different answers to
+# one question: what URLs will a *browser* use? Everything the visitor's browser
+# touches — the app itself, the Blockscout API, the RPC a wallet is handed — has
+# to be reachable from where they are, not just from this machine. So there is
+# one function that applies a complete set, and three commands that fill it in.
+#
+# The port arguments are deliberately allowed to be empty: behind a tunnel or a
+# reverse proxy the port is part of the scheme and must not appear in the URL.
+TUNNEL_STATE="$LOG_DIR/tunnels"
 
+apply_public_config() { # app_proto app_host app_port api_proto api_host api_port ws_proto rpc_url
+  export DEVNET_PUBLIC_PROTOCOL="$1" DEVNET_PUBLIC_HOST="$2" DEVNET_PUBLIC_PORT="$3"
+  export DEVNET_API_PROTOCOL="$4" DEVNET_API_PUBLIC_HOST="$5" DEVNET_API_PUBLIC_PORT="$6"
+  export DEVNET_WS_PROTOCOL="$7" DEVNET_PUBLIC_RPC_URL="$8"
+
+  if [ "$DOCKER_MODE" = "1" ]; then
+    # The containerised UI has no .env.local — its public URLs come from compose,
+    # so applying them means recreating that one container. --no-deps keeps it
+    # from restarting the control API underneath itself.
+    compose up -d --force-recreate --no-deps --pull never devnet-ui >/dev/null
+  else
+    write_frontend_env
+  fi
+  wait_for "http://localhost:3000/" "explorer ui" 90
+}
+
+# The from-source path keeps its values in .env.local and runs its own dev server.
+write_frontend_env() {
+  local env_file="$FRONTEND_DIR/.env.local"
   [ -f "$env_file" ] || { echo "🚨 $env_file not found — run ./stack/setup.sh first." >&2; exit 1; }
 
   local tmp
   tmp="$(mktemp)"
   sed -E \
-    -e "s|^NEXT_PUBLIC_APP_HOST=.*|NEXT_PUBLIC_APP_HOST=${host}|" \
-    -e "s|^NEXT_PUBLIC_API_HOST=.*|NEXT_PUBLIC_API_HOST=${host}|" \
-    -e "s|^NEXT_PUBLIC_STATS_API_HOST=.*|NEXT_PUBLIC_STATS_API_HOST=http://${host}:8080|" \
-    -e "s|^NEXT_PUBLIC_VISUALIZE_API_HOST=.*|NEXT_PUBLIC_VISUALIZE_API_HOST=http://${host}:8081|" \
-    -e "s|^NEXT_PUBLIC_NETWORK_RPC_URL=.*|NEXT_PUBLIC_NETWORK_RPC_URL=http://${host}:${DEVNET_RPC_PORT}|" \
+    -e "s|^NEXT_PUBLIC_APP_PROTOCOL=.*|NEXT_PUBLIC_APP_PROTOCOL=${DEVNET_PUBLIC_PROTOCOL}|" \
+    -e "s|^NEXT_PUBLIC_APP_HOST=.*|NEXT_PUBLIC_APP_HOST=${DEVNET_PUBLIC_HOST}|" \
+    -e "s|^NEXT_PUBLIC_APP_PORT=.*|NEXT_PUBLIC_APP_PORT=${DEVNET_PUBLIC_PORT}|" \
+    -e "s|^NEXT_PUBLIC_API_PROTOCOL=.*|NEXT_PUBLIC_API_PROTOCOL=${DEVNET_API_PROTOCOL}|" \
+    -e "s|^NEXT_PUBLIC_API_HOST=.*|NEXT_PUBLIC_API_HOST=${DEVNET_API_PUBLIC_HOST}|" \
+    -e "s|^NEXT_PUBLIC_API_PORT=.*|NEXT_PUBLIC_API_PORT=${DEVNET_API_PUBLIC_PORT}|" \
+    -e "s|^NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL=.*|NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL=${DEVNET_WS_PROTOCOL}|" \
+    -e "s|^NEXT_PUBLIC_STATS_API_HOST=.*|NEXT_PUBLIC_STATS_API_HOST=${DEVNET_PUBLIC_PROTOCOL}://${DEVNET_PUBLIC_HOST}:8080|" \
+    -e "s|^NEXT_PUBLIC_VISUALIZE_API_HOST=.*|NEXT_PUBLIC_VISUALIZE_API_HOST=${DEVNET_PUBLIC_PROTOCOL}://${DEVNET_PUBLIC_HOST}:8081|" \
+    -e "s|^NEXT_PUBLIC_NETWORK_RPC_URL=.*|NEXT_PUBLIC_NETWORK_RPC_URL=${DEVNET_PUBLIC_RPC_URL}|" \
     "$env_file" > "$tmp"
   mv "$tmp" "$env_file"
-}
 
-restart_frontend() {
   pkill -f "next dev -p 3000" 2>/dev/null || true
   sleep 1
   ( cd "$FRONTEND_DIR" && pnpm dev:local > "$LOG_DIR/frontend.log" 2>&1 & )
-  wait_for "http://localhost:3000/" "explorer ui" 80
-}
-
-# The containerised UI has no .env.local — its public URLs come from compose, so
-# exposing it means recreating that one container with a different host.
-expose_docker() {
-  local host="$1"
-  export DEVNET_PUBLIC_HOST="$host"
-  export DEVNET_HOST_IP="$host"
-  compose up -d --force-recreate --no-deps --pull never devnet-ui
-  wait_for "http://localhost:3000/" "explorer ui" 60
 }
 
 cmd_expose() {
   local host="${1:-$(detect_lan_ip)}"
   [ -n "$host" ] || { echo "🚨 Could not detect a LAN address — pass one: ./devnet.sh expose 192.168.1.42" >&2; exit 1; }
 
-  # What the explorer tells a visitor to point their wallet at has to be the port
-  # the node is on, not the one we would have started it on.
-  local node_port node_chain
-  node_port="$(active_node_port)"
-  node_chain="$(active_node_chain)"
-  export DEVNET_RPC_PORT="$node_port"
-  export DEVNET_CHAIN_ID="$node_chain"
-
   mkdir -p "$LOG_DIR"
-  echo "→ rebuilding the explorer for http://$host:3000"
-  if [ "$DOCKER_MODE" = "1" ]; then
-    expose_docker "$host"
-  else
-    set_public_host "$host"
-    restart_frontend
-  fi
+  stop_tunnels
+  local port chain
+  port="$(active_node_port)"; chain="$(active_node_chain)"
+  export DEVNET_HOST_IP="$host"
+
+  echo "→ addressing the explorer as http://$host:3000"
+  apply_public_config http "$host" 3000 http "$host" 80 ws "http://$host:$port"
 
   echo
   echo "Use this address yourself too — while exposed, http://localhost:3000 breaks:"
@@ -322,13 +350,13 @@ cmd_expose() {
   echo
   echo "Share these on your network:"
   echo "  Explorer:  http://$host:3000"
-  echo "  RPC:       http://$host:$node_port     (chain id $node_chain)"
+  echo "  RPC:       http://$host:$port     (chain id $chain)"
   echo "  API:       http://$host/api/v2"
   echo
   echo "⚠️  Anyone who can reach these can also patch balances, write storage and"
   echo "    stop your node — the control API has no authentication."
   echo "    For a shared network, restart it read-only:"
-  echo "      ./devnet.sh down && DEVNET_READONLY=1 ./devnet.sh up && ./devnet.sh expose $host"
+  echo "      ./devnet.sh down${DOCKER_SUFFIX} && DEVNET_READONLY=1 ./devnet.sh up${DOCKER_SUFFIX} && ./devnet.sh expose${DOCKER_SUFFIX}"
   echo "    macOS may prompt to allow incoming connections the first time."
 }
 
@@ -432,15 +460,91 @@ cmd_fork() {
   echo "Only blocks from $fork_block onwards are indexed; history stays on the upstream chain."
 }
 
+# ── tunnel mode ──────────────────────────────────────────────────────────────
+#
+# Three separate hostnames, because the browser reaches three different services
+# and a quick tunnel maps one hostname to one port. They are HTTPS, which is why
+# this mode also fixes the two things a LAN address cannot: wallets that refuse
+# plain-HTTP RPC, and anything that is not on your network at all.
+#
+# --protocol defaults to http2: cloudflared prefers QUIC, and a network that
+# blocks UDP/7844 leaves the tunnel registering forever with no useful error.
+TUNNEL_PROTOCOL="${DEVNET_TUNNEL_PROTOCOL:-http2}"
+
+stop_tunnels() {
+  [ -f "$TUNNEL_STATE" ] || return 0
+  while read -r pid _; do
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+  done < "$TUNNEL_STATE"
+  rm -f "$TUNNEL_STATE"
+}
+
+# Starts one quick tunnel and echoes its URL. Name is only used for the log file.
+start_tunnel() { # name, local_url
+  local name="$1" target="$2" log="$LOG_DIR/tunnel-$1.log" url=""
+  nohup cloudflared tunnel --url "$target" --no-autoupdate --protocol "$TUNNEL_PROTOCOL" \
+    > "$log" 2>&1 &
+  echo "$! $name" >> "$TUNNEL_STATE"
+
+  for _ in $(seq 1 40); do
+    url="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$log" 2>/dev/null | head -1)"
+    [ -n "$url" ] && break
+    sleep 1
+  done
+  [ -n "$url" ] || { echo "🚨 $name tunnel did not come up — see $log" >&2; return 1; }
+
+  # A URL appears in the log before the edge connection is registered; using it
+  # too early gets Cloudflare's 1033 error page instead of the service.
+  for _ in $(seq 1 40); do
+    grep -q "Registered tunnel connection" "$log" && break
+    sleep 1
+  done
+  echo "$url"
+}
+
+cmd_tunnel() {
+  command -v cloudflared >/dev/null 2>&1 || {
+    echo "🚨 cloudflared is not installed — brew install cloudflared" >&2; exit 1; }
+
+  mkdir -p "$LOG_DIR"
+  stop_tunnels
+
+  local port chain ui_url api_url rpc_url
+  port="$(active_node_port)"; chain="$(active_node_chain)"
+
+  echo "→ opening tunnels (explorer, Blockscout API, RPC)"
+  ui_url="$(start_tunnel ui http://localhost:3000)" || exit 1
+  api_url="$(start_tunnel api http://localhost:80)" || exit 1
+  rpc_url="$(start_tunnel rpc "http://localhost:$port")" || exit 1
+
+  # Ports are empty on purpose: a tunnel answers on 443 and the scheme carries it.
+  echo "→ addressing the explorer as $ui_url"
+  apply_public_config https "${ui_url#https://}" "" https "${api_url#https://}" "" wss "$rpc_url"
+
+  echo
+  echo "Public — anyone with these URLs, from anywhere:"
+  echo "  Explorer:  $ui_url"
+  echo "  RPC:       $rpc_url     (chain id $chain)"
+  echo "  API:       $api_url/api/v2"
+  echo
+  echo "  Open the explorer at the tunnel URL, not localhost — the bundle now"
+  echo "  calls its API on $api_url."
+  echo
+  echo "⚠️  This is the public internet, and the RPC exposes Anvil's admin methods:"
+  echo "    anyone with the RPC URL can set balances, overwrite code and impersonate"
+  echo "    accounts. Share it only with people you would give the chain to."
+  echo "    Stop everything with: ./devnet.sh local${DOCKER_SUFFIX}"
+  echo
+  echo "  Quick tunnels get a new hostname every restart; these URLs are not stable."
+}
+
 cmd_local() {
   mkdir -p "$LOG_DIR"
-  echo "→ rebuilding the explorer for http://localhost:3000"
-  if [ "$DOCKER_MODE" = "1" ]; then
-    expose_docker localhost
-  else
-    set_public_host localhost
-    restart_frontend
-  fi
+  stop_tunnels
+  local port
+  port="$(active_node_port)"
+  echo "→ addressing the explorer as http://localhost:3000"
+  apply_public_config http localhost 3000 http localhost 80 ws "http://localhost:$port"
   echo "  ✓ back to localhost only"
 }
 
@@ -452,6 +556,7 @@ case "${1:-up}" in
   logs) cmd_logs ;;
   expose) cmd_expose "${2:-}" ;;
   local) cmd_local ;;
+  tunnel) cmd_tunnel ;;
   fork) cmd_fork "${2:-}" "${3:-}" ;;
-  *) sed -n '2,12p' "$0"; exit 1 ;;
+  *) sed -n '2,15p' "$0"; exit 1 ;;
 esac
