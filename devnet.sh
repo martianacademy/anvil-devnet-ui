@@ -62,8 +62,15 @@ export DEVNET_REPO_DIR="$CONTROL_DIR"
 DEVNET_HOST_IP="${DEVNET_HOST_IP:-}"
 export DEVNET_HOST_IP
 
+# The single-origin file applies to both paths, so it is added on demand rather
+# than living in the --docker file set.
+compose_proxy() {
+  DEVNET_WITH_PROXY=1 compose "$@"
+}
+
 compose() {
   local files=(-f "$COMPOSE_DIR/anvil.yml" -f "$COMPOSE_DIR/devnet.override.yml")
+  [ "${DEVNET_WITH_PROXY:-0}" = "1" ] && files+=(-f "$COMPOSE_DIR/devnet-proxy.yml")
   if [ "$DOCKER_MODE" = "1" ]; then
     files+=(-f "$COMPOSE_DIR/devnet-stack.yml")
     # Anvil runs inside the control API container, so that is the host the
@@ -474,14 +481,23 @@ cmd_fork() {
 # the LAN address, never localhost" caveat disappears, and a tunnel needs one
 # hostname instead of three. It is also the shape a cloud deployment behind a
 # reverse proxy takes, so the config carries over unchanged.
+# Works on both paths: with --docker the explorer and the control API are
+# containers on the compose network, without it they are host processes that the
+# proxy reaches through host.docker.internal.
 single_origin_up() {
-  [ "$DOCKER_MODE" = "1" ] || {
-    echo "🚨 Single origin needs the container path — add --docker." >&2; exit 1; }
+  if [ "$DOCKER_MODE" = "1" ]; then
+    export DEVNET_FRONT_PROXY_PASS="http://devnet-ui:3000"
+    export DEVNET_RPC_PROXY_PASS="${DEVNET_RPC_PROXY_PASS:-http://devnet-api:3010/api/rpc}"
+  else
+    export DEVNET_FRONT_PROXY_PASS="http://host.docker.internal:3000"
+    export DEVNET_RPC_PROXY_PASS="${DEVNET_RPC_PROXY_PASS:-http://host.docker.internal:$DEVNET_API_PORT/api/rpc}"
+  fi
+
   # --pull missing, not never: nginx:alpine is a public base image and may not be
   # here yet, unlike the images this project builds.
-  compose up -d --no-deps --pull missing devnet-proxy >/dev/null
+  compose_proxy up -d --no-deps --pull missing devnet-proxy >/dev/null
   # Blockscout's nginx has to be recreated to pick up FRONT_PROXY_PASS.
-  compose up -d --force-recreate --no-deps --pull never proxy >/dev/null
+  compose_proxy up -d --force-recreate --no-deps --pull missing proxy >/dev/null
   wait_for "http://localhost:$DEVNET_PROXY_PORT/" "single-origin proxy" 60
 }
 
