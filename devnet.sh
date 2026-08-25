@@ -201,8 +201,7 @@ cmd_status() {
   # the node is actually on, which is the whole point of it discovering nodes.
   local status node_port
   status="$(curl -sf -m 3 "http://localhost:$DEVNET_API_PORT/api/anvil/status" 2>/dev/null || true)"
-  node_port="$(printf '%s' "$status" | sed -n 's/.*"port":\([0-9]*\).*/\1/p' | head -1)"
-  node_port="${node_port:-$DEVNET_RPC_PORT}"
+  node_port="$(active_node_port)"
 
   printf 'anvil (%s):   ' "$node_port"
   curl -sf -m 3 -o /dev/null -X POST "http://127.0.0.1:$node_port" \
@@ -234,6 +233,19 @@ cmd_status() {
 cmd_logs() {
   tail -f "$LOG_DIR"/*.log
 }
+
+# The port the node is really on. DEVNET_RPC_PORT is only the default used when
+# starting one; the control API discovers whatever is actually listening, and
+# reporting the configured port instead sends people to a dead address.
+active_node_field() { # field, fallback
+  local status value
+  status="$(curl -sf -m 3 "http://localhost:$DEVNET_API_PORT/api/anvil/status" 2>/dev/null || true)"
+  value="$(printf '%s' "$status" | sed -n "s/.*\"$1\":\([0-9]*\).*/\1/p" | head -1)"
+  echo "${value:-$2}"
+}
+
+active_node_port() { active_node_field port "$DEVNET_RPC_PORT"; }
+active_node_chain() { active_node_field chainId "$DEVNET_CHAIN_ID"; }
 
 detect_lan_ip() {
   local ip
@@ -273,14 +285,36 @@ restart_frontend() {
   wait_for "http://localhost:3000/" "explorer ui" 80
 }
 
+# The containerised UI has no .env.local — its public URLs come from compose, so
+# exposing it means recreating that one container with a different host.
+expose_docker() {
+  local host="$1"
+  export DEVNET_PUBLIC_HOST="$host"
+  export DEVNET_HOST_IP="$host"
+  compose up -d --force-recreate --no-deps --pull never devnet-ui
+  wait_for "http://localhost:3000/" "explorer ui" 60
+}
+
 cmd_expose() {
   local host="${1:-$(detect_lan_ip)}"
   [ -n "$host" ] || { echo "🚨 Could not detect a LAN address — pass one: ./devnet.sh expose 192.168.1.42" >&2; exit 1; }
 
+  # What the explorer tells a visitor to point their wallet at has to be the port
+  # the node is on, not the one we would have started it on.
+  local node_port node_chain
+  node_port="$(active_node_port)"
+  node_chain="$(active_node_chain)"
+  export DEVNET_RPC_PORT="$node_port"
+  export DEVNET_CHAIN_ID="$node_chain"
+
   mkdir -p "$LOG_DIR"
-  set_public_host "$host"
   echo "→ rebuilding the explorer for http://$host:3000"
-  restart_frontend
+  if [ "$DOCKER_MODE" = "1" ]; then
+    expose_docker "$host"
+  else
+    set_public_host "$host"
+    restart_frontend
+  fi
 
   echo
   echo "Use this address yourself too — while exposed, http://localhost:3000 breaks:"
@@ -288,7 +322,7 @@ cmd_expose() {
   echo
   echo "Share these on your network:"
   echo "  Explorer:  http://$host:3000"
-  echo "  RPC:       http://$host:$DEVNET_RPC_PORT     (chain id $DEVNET_CHAIN_ID)"
+  echo "  RPC:       http://$host:$node_port     (chain id $node_chain)"
   echo "  API:       http://$host/api/v2"
   echo
   echo "⚠️  Anyone who can reach these can also patch balances, write storage and"
@@ -400,9 +434,13 @@ cmd_fork() {
 
 cmd_local() {
   mkdir -p "$LOG_DIR"
-  set_public_host localhost
   echo "→ rebuilding the explorer for http://localhost:3000"
-  restart_frontend
+  if [ "$DOCKER_MODE" = "1" ]; then
+    expose_docker localhost
+  else
+    set_public_host localhost
+    restart_frontend
+  fi
   echo "  ✓ back to localhost only"
 }
 
