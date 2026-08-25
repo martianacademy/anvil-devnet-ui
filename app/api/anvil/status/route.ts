@@ -7,7 +7,18 @@ import { handleRoute } from "@/lib/route";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * The address teammates would use to reach this devnet.
+ *
+ * Reading it from the local interfaces only works when this process is on the
+ * host. In a container the first non-internal address is the Docker network
+ * (172.19.x), which is useless to anyone outside it — so devnet.sh passes the
+ * real one in.
+ */
 function getLanIp(): string | null {
+    const fromHost = process.env.DEVNET_HOST_IP?.trim();
+    if (fromHost) return fromHost;
+
     for (const addrs of Object.values(os.networkInterfaces())) {
         for (const iface of addrs ?? []) {
             if (iface.family === "IPv4" && !iface.internal) return iface.address;

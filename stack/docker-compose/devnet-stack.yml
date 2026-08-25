@@ -28,6 +28,9 @@ services:
       DEVNET_READONLY: "${DEVNET_READONLY:-}"
       # The node lives in this container, so that is where the indexer must look.
       DEVNET_RPC_HOST: devnet-api
+      # A container cannot see the host's LAN address — its own is the Docker
+      # network, which nobody outside can reach.
+      DEVNET_HOST_IP: "${DEVNET_HOST_IP:-}"
       # This API is one of the containers in the stack it manages: it must reach
       # the explorer through the proxy service, and it must recreate the UI
       # container on a chain change rather than rewriting a .env.local it has not got.

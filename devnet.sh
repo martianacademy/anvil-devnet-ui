@@ -51,6 +51,10 @@ set -- "${ARGS[@]+"${ARGS[@]}"}"
 export DEVNET_COMPOSE_DIR="$COMPOSE_DIR"
 export DEVNET_REPO_DIR="$CONTROL_DIR"
 
+# The containerised control API cannot see this machine's LAN address, so hand it over.
+DEVNET_HOST_IP="${DEVNET_HOST_IP:-}"
+export DEVNET_HOST_IP
+
 compose() {
   local files=(-f "$COMPOSE_DIR/anvil.yml" -f "$COMPOSE_DIR/devnet.override.yml")
   if [ "$DOCKER_MODE" = "1" ]; then
@@ -91,6 +95,11 @@ start_anvil() {
 }
 
 cmd_up_docker() {
+  # Detected here rather than at the top: detect_lan_ip is defined further down,
+  # and an address picked up at boot goes stale when the laptop changes network.
+  [ -n "$DEVNET_HOST_IP" ] || DEVNET_HOST_IP="$(detect_lan_ip)"
+  export DEVNET_HOST_IP
+
   if [ ! -d "$COMPOSE_DIR" ]; then
     echo "🚨 Blockscout's compose files are missing — run ./stack/setup.sh --docker first." >&2
     exit 1
@@ -188,16 +197,36 @@ cmd_reset() {
 }
 
 cmd_status() {
-  printf 'anvil (%s):   ' "$DEVNET_RPC_PORT"
-  curl -sf -m 3 -o /dev/null -X POST "http://127.0.0.1:$DEVNET_RPC_PORT" \
+  # Ask the control API rather than assuming DEVNET_RPC_PORT: it reports the port
+  # the node is actually on, which is the whole point of it discovering nodes.
+  local status node_port
+  status="$(curl -sf -m 3 "http://localhost:$DEVNET_API_PORT/api/anvil/status" 2>/dev/null || true)"
+  node_port="$(printf '%s' "$status" | sed -n 's/.*"port":\([0-9]*\).*/\1/p' | head -1)"
+  node_port="${node_port:-$DEVNET_RPC_PORT}"
+
+  printf 'anvil (%s):   ' "$node_port"
+  curl -sf -m 3 -o /dev/null -X POST "http://127.0.0.1:$node_port" \
     -H 'content-type: application/json' \
     -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' && echo "up" || echo "down"
   printf 'control api:  '
-  curl -sf -m 3 -o /dev/null "http://localhost:$DEVNET_API_PORT/api/anvil/status" && echo "up" || echo "down"
+  [ -n "$status" ] && echo "up" || echo "down"
   printf 'blockscout:   '
   curl -sf -m 3 -o /dev/null "http://localhost/api/v2/config/backend-version" && echo "up" || echo "down"
   printf 'explorer ui:  '
   curl -sf -m 3 -o /dev/null "http://localhost:3000/" && echo "up" || echo "down"
+
+  local ip
+  ip="$(detect_lan_ip)"
+  if [ -n "$ip" ]; then
+    echo
+    printf '  %-13s %-28s %s\n' "" "On this machine" "On your network"
+    printf '  %-13s %-28s %s\n' "Explorer" "http://localhost:3000" "http://$ip:3000"
+    printf '  %-13s %-28s %s\n' "RPC" "http://127.0.0.1:$node_port" "http://$ip:$node_port"
+    printf '  %-13s %-28s %s\n' "Explorer API" "http://localhost/api/v2" "http://$ip/api/v2"
+    echo
+    echo "  The network column needs ./devnet.sh expose — the explorer bakes its URLs in."
+  fi
+
   echo
   compose ps --format 'table {{.Name}}\t{{.Status}}' 2>/dev/null || true
 }

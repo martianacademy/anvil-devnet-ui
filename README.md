@@ -181,6 +181,29 @@ here — see [Licence and attribution](#licence-and-attribution).
 would keep serving the old chain. `reset` clears the control API's tables, drops the Blockscout
 volumes and reindexes from scratch.
 
+### Which address is it on?
+
+`./devnet.sh status` prints both columns — the loopback addresses for this machine and the LAN
+addresses for everyone else:
+
+```
+                On this machine              On your network
+  Explorer      http://localhost:3000        http://192.168.1.42:3000
+  RPC           http://127.0.0.1:8545        http://192.168.1.42:8545
+  Explorer API  http://localhost/api/v2      http://192.168.1.42/api/v2
+```
+
+The port comes from the node that is actually running, not from `DEVNET_RPC_PORT`, so it is right
+even when someone started Anvil somewhere else. `GET /api/anvil/status` returns the same thing as
+`lanIp` and `port` if you want it in a script:
+
+```bash
+curl -s localhost:3010/api/anvil/status | jq -r '"http://\(.lanIp):\(.port)"'
+```
+
+The network column is only reachable after `./devnet.sh expose` — see
+[Sharing it on your network](#sharing-it-on-your-network).
+
 ### Where things live
 
 | URL | What |
