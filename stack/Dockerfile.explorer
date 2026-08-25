@@ -108,31 +108,15 @@ ENV NODE_OPTIONS="--max-old-space-size=${NODE_HEAP_MB}"
 # on an 8 GB Docker Desktop it gets the whole container OOM-killed regardless of
 # the heap above. Webpack is slower and stays inside the budget. Pass
 # --build-arg NEXT_BUNDLER=turbopack on a roomier machine.
-# Next fans page-data collection out to one worker per CPU — fifteen here, each
-# free to take the heap above. That is what finally exhausts the VM, after the
-# bundle has already compiled. There is no environment variable for it, so the
-# knob has to be written into the config; the build fails loudly if upstream ever
-# moves the anchor, rather than quietly going back to fifteen.
+# Two config edits webpack needs and Turbopack does not — capping the build's
+# worker count, and naming the packages the webpack tracer fails to follow. Both
+# live in a script rather than inline, because the second one has to walk the
+# dependency graph to find them. See stack/explorer-build/patch-next-config.js.
 ARG NEXT_BUILD_CPUS=2
 ENV NEXT_BUILD_CPUS=${NEXT_BUILD_CPUS}
-# The second edit is a separate problem with the same remedy. `output: standalone`
-# ships only the modules Next's tracer can follow, and the webpack tracer does not
-# see interface-datastore, which @libp2p/config imports dynamically. The server
-# then throws ERR_MODULE_NOT_FOUND rendering any page that reaches the wallet
-# stack — /address/… among them — and returns a 500. Upstream builds with
-# Turbopack, whose trace does find it.
-RUN node -e "\
-const fs = require('fs'); \
-const file = 'next.config.js'; \
-let source = fs.readFileSync(file, 'utf8'); \
-const patch = (anchor, addition, what) => { \
-  if (!source.includes(anchor)) { throw new Error('next.config.js has no ' + what); } \
-  source = source.replace(anchor, anchor + addition); \
-}; \
-patch('experimental: {', '\n    cpus: Number(process.env.NEXT_BUILD_CPUS) || 2,', 'experimental block to cap cpus in'); \
-patch(\"'/**': [\", \" './node_modules/.pnpm/interface-datastore@*/**',\", 'outputFileTracingIncludes entry to extend'); \
-fs.writeFileSync(file, source); \
-"
+COPY stack/explorer-build/patch-next-config.js /tmp/patch-next-config.js
+ENV UNTRACED_LIST=/tmp/untraced-packages.txt
+RUN node /tmp/patch-next-config.js && rm /tmp/patch-next-config.js
 
 ARG NEXT_BUNDLER=webpack
 # build_sprite.sh ends with `export NEXT_PUBLIC_ICON_SPRITE_HASH=...`, and the
@@ -145,6 +129,18 @@ RUN bash -c 'set -a \
     && set +a \
     && pnpm routes:generate \
     && if [ "$NEXT_BUNDLER" = "webpack" ]; then pnpm exec next build --webpack; else pnpm run build; fi'
+
+# The standalone output is missing the packages listed above, and copying them
+# is not enough on its own: pnpm resolves through a farm of relative symlinks, so
+# a package can be present and still unreachable from the file importing it.
+# `cp -a` keeps the links, and because the whole reachable set is copied they
+# still point at something.
+RUN while read -r pkg; do \
+      [ -n "$pkg" ] || continue; \
+      mkdir -p ".next/standalone/node_modules/.pnpm"; \
+      cp -a "node_modules/.pnpm/$pkg" ".next/standalone/node_modules/.pnpm/"; \
+    done < "$UNTRACED_LIST" \
+    && echo "copied $(wc -l < "$UNTRACED_LIST") untraced packages into the standalone output"
 
 # ── runtime ──────────────────────────────────────────────────────────────────
 FROM node:22-slim AS runtime
