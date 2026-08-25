@@ -381,6 +381,7 @@ macOS may ask to allow incoming connections the first time you expose the stack.
 | `DEVNET_WORKSPACE` | parent of this repo | Where `blockscout/` and `blockscout-frontend/` are cloned |
 | `DEVNET_DB_PATH` | `./devnet.db` | Move the SQLite file elsewhere |
 | `DEVNET_READONLY` | unset | `1` disables every state-changing route and RPC method |
+| `DEVNET_RPC_ALLOWED_ORIGIN` | `*` | Origin allowed to call `/api/rpc` from a browser |
 | `DEVNET_EXPLORER_AUTOSYNC` | `1` | `0` stops the explorer from following the node; manage the stack yourself |
 | `DEVNET_RPC_HOST` | `host.docker.internal` | Host the Blockscout indexer reaches the node on. `--docker` sets it to the API container |
 | `DEVNET_PUBLIC_HOST` | `localhost` | Host a *browser* uses for the explorer and the RPC; `devnet.sh expose` rewrites it |

@@ -51,6 +51,19 @@ for arg in "$@"; do
 done
 set -- "${ARGS[@]+"${ARGS[@]}"}"
 
+# --docker says how to *start* things. Every other command acts on a stack that
+# is already running, and what matters there is how it is running — not what was
+# typed. Asking the containers removes a flag people have to remember, and with
+# it a whole class of "it worked, but through the wrong path".
+case "${1:-up}" in
+  up|reset) ;;
+  *)
+    if [ "$DOCKER_MODE" = "0" ] && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx devnet-api; then
+      DOCKER_MODE=1
+    fi
+    ;;
+esac
+
 # Both are read by stack/docker-compose/devnet-stack.yml.
 export DEVNET_COMPOSE_DIR="$COMPOSE_DIR"
 # Echoed back in hints so copy-pasted commands keep the mode the user is in.

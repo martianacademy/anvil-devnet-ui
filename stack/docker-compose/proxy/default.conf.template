@@ -26,6 +26,21 @@ server {
     proxy_read_timeout 120s;
     proxy_buffering off;
 
+    # Blockscout's nginx sends everything under /api to its backend, which would
+    # swallow the DevNet control API's own proxy path and answer node control and
+    # state patches with "Params 'module' and 'action' are required parameters".
+    # Claimed here first — a longer prefix wins over "/" — and handed to the
+    # explorer, whose route forwards it to the control API server-side.
+    location /api/devnet {
+        proxy_pass            ${UI_PROXY_PASS};
+        proxy_http_version    1.1;
+        proxy_set_header      Host $host;
+        proxy_set_header      X-Real-IP $remote_addr;
+        proxy_set_header      X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header      X-Forwarded-Proto $scheme;
+        proxy_read_timeout    300s;
+    }
+
     # The wallet's RPC endpoint. Pointed at the control API's screening proxy by
     # default, not at Anvil directly: that one refuses anvil_*, evm_* and
     # hardhat_* when DEVNET_READONLY is set, so a shared URL cannot rewrite

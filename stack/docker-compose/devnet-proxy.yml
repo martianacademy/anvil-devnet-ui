@@ -23,6 +23,9 @@ services:
       - "${DEVNET_PROXY_PORT:-8000}:80"
     environment:
       STACK_PROXY_PASS: http://proxy:80
+      # Where the explorer itself lives, for the one path Blockscout's nginx
+      # would otherwise claim.
+      UI_PROXY_PASS: "${DEVNET_FRONT_PROXY_PASS:-http://devnet-ui:3000}"
       # The control API screens out state-changing RPC methods when it runs
       # read-only; point this at the node itself for raw Anvil instead.
       RPC_PROXY_PASS: "${DEVNET_RPC_PROXY_PASS:-http://devnet-api:3010/api/rpc}"

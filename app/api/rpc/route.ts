@@ -4,6 +4,42 @@ import { resolveFromRequest } from "@/lib/activeProject";
 const READONLY = process.env.DEVNET_READONLY === "1" || process.env.DEVNET_READONLY === "true";
 
 /**
+ * Who may call this proxy from a browser.
+ *
+ * A dapp served from anywhere but this origin — a Vite dev server, a tunnel, a
+ * phone — is a different origin, and without these headers the browser refuses
+ * the request before the node ever sees it. `curl` does not enforce CORS, so the
+ * proxy looks healthy from a terminal while every browser is blocked.
+ *
+ * Defaults to `*` because this is a local devnet tool, but stays configurable:
+ * hardcoding it is how somebody ends up deploying this and finding out later.
+ */
+const ALLOWED_ORIGIN = process.env.DEVNET_RPC_ALLOWED_ORIGIN ?? "*";
+
+const CORS_HEADERS = {
+    "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "content-type",
+    // Without this the browser preflights every single JSON-RPC call, which on a
+    // page that reads a dozen values doubles the round trips.
+    "Access-Control-Max-Age": "86400",
+} as const;
+
+/**
+ * @dev Every response goes through here, including the error ones. Attaching the
+ *      headers only to success would leave a failing call looking like a network
+ *      error in the browser instead of showing the reason the proxy gave.
+ */
+function reply(body: unknown, status = 200) {
+    return NextResponse.json(body, { status, headers: CORS_HEADERS });
+}
+
+/** The preflight a browser sends before any cross-origin JSON-RPC POST. */
+export async function OPTIONS() {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+}
+
+/**
  * Namespaces that change chain state. In read-only mode the proxy still serves
  * eth_*, net_*, web3_* and debug_trace* so the explorer works, but refuses these.
  */
@@ -26,9 +62,9 @@ export async function POST(req: Request) {
         const body = await req.json();
 
         if (isBlocked(body)) {
-            return NextResponse.json(
+            return reply(
                 { error: "State-changing RPC methods are disabled in read-only mode (DEVNET_READONLY=1)." },
-                { status: 403 }
+                403
             );
         }
 
@@ -40,14 +76,11 @@ export async function POST(req: Request) {
             signal: AbortSignal.timeout(15_000),
         });
         if (!response.ok) {
-            return NextResponse.json({ error: `Node returned HTTP ${response.status}` }, { status: 502 });
+            return reply({ error: `Node returned HTTP ${response.status}` }, 502);
         }
-        return NextResponse.json(await response.json());
+        return reply(await response.json());
     } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Unknown error";
-        return NextResponse.json(
-            { error: `Cannot reach the local node: ${message}` },
-            { status: 503 }
-        );
+        return reply({ error: `Cannot reach the local node: ${message}` }, 503);
     }
 }
