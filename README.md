@@ -630,6 +630,10 @@ es.onmessage = (e) => {
 Event types: `status` (chain, port, project), `block`, `tx`, and `reset` when the node restarts or
 the chain is wiped.
 
+`/api/rpc` answers CORS preflights and carries `Access-Control-Allow-Origin` on every response,
+success or error, so a dapp on another origin — a Vite dev server, a tunnel, a phone — can call it
+directly. Controlled by `DEVNET_RPC_ALLOWED_ORIGIN` (default `*`).
+
 ---
 
 ## Project layout
@@ -663,7 +667,13 @@ anvil-devnet-ui/
 ├── stack/
 │   ├── setup.sh                  # fetch Blockscout, apply the DevNet overlay
 │   ├── Dockerfile.explorer       # the explorer UI image — built locally, never published
-│   ├── docker-compose/           # devnet.override.yml + devnet-stack.yml
+│   ├── explorer-build/
+│   │   └── patch-next-config.js  # untraced-package closure + build worker cap (see next.config.js patch)
+│   ├── docker-compose/
+│   │   ├── devnet.override.yml   # Blockscout env for the anvil preset
+│   │   ├── devnet-stack.yml      # devnet-api + devnet-ui as containers (--docker)
+│   │   ├── devnet-proxy.yml      # single-origin front door (devnet.sh proxy / tunnel)
+│   │   └── proxy/                # devnet-proxy's nginx config
 │   └── explorer-overlay/         # the DevNet UI (our code) + upstream.patch
 ├── tests/                        # node --test unit tests
 ├── scripts/                      # resetDb.ts, buildMockErc20.ts, smoke.ts
@@ -692,6 +702,9 @@ anvil-devnet-ui/
 | `--docker`: a node on a **non-default port is unreachable from the host** | Only `DEVNET_RPC_PORT` is published from the API container. The indexer still follows the node over the compose network, but `cast`/MetaMask on your machine will not reach it — restart with `DEVNET_RPC_PORT=<port> ./devnet.sh up --docker`. |
 | `--docker`: the explorer **stops following the node** | The auto-sync runs `docker compose` against the host daemon, so the compose directory is bind-mounted at the same absolute path inside the container. A different `DEVNET_COMPOSE_DIR` on either side breaks it. |
 | The trace tab says **tracing unavailable** | The node was started without `--steps-tracing`, or you are on a fork whose RPC blocks `debug_traceTransaction`. |
+| Single origin: node control and state patches answer with **"Params 'module' and 'action' are required"** | Blockscout's nginx sends everything under `/api` to its backend, `/api/devnet/*` included. `devnet-proxy`'s config claims that prefix first — make sure `stack/docker-compose/proxy/default.conf.template` is actually mounted (`devnet.sh proxy` / `tunnel` do this). |
+| Single origin: `/rpc` or `/api/devnet` return **502** after a restart | nginx resolves an upstream hostname once, at startup, and keeps that address after `devnet-ui` or `devnet-api` is recreated. `devnet.sh` restarts the front door (`devnet-proxy`) whenever addressing changes; if you recreated those containers by hand, `docker restart devnet-proxy` yourself. |
+| The explorer image builds, but **`/address` (or any page reaching a wallet) returns 500** with `ERR_MODULE_NOT_FOUND` | The webpack tracer behind `output: standalone` cannot follow `@libp2p/config`'s dynamic imports, and — subtler — a package can be traced in and still unreachable, because pnpm resolves through a farm of relative symlinks that tracing does not reproduce. `stack/explorer-build/patch-next-config.js` walks the real dependency closure over pnpm's symlinks and copies those directories with `cp -a`, links intact; it runs automatically as part of the image build. |
 
 ---
 
