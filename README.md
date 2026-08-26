@@ -334,6 +334,17 @@ It defaults to `--protocol http2`. cloudflared prefers QUIC, and a network that 
 phone hotspots often do — leaves the tunnel retrying forever behind Cloudflare's error 1033.
 Override with `DEVNET_TUNNEL_PROTOCOL`.
 
+It also retries far longer than cloudflared's default of five attempts, which a dropped link exhausts
+in seconds — after that the process exits and the shared URL simply stops answering, with nothing on
+screen to say so. Reconnects inside one process keep the same hostname, so retrying is what keeps a
+link working; restarting cloudflared would hand out a different one. `DEVNET_TUNNEL_RETRIES` tunes it,
+and `./devnet.sh status` reports whether the tunnel is still up:
+
+```
+  tunnel devnet   up    https://sells-providing-direct-reflected.trycloudflare.com
+  tunnel devnet   DOWN  (exited — ./devnet.sh tunnel to reopen)
+```
+
 Quick tunnels get a new hostname on every restart, so these URLs are not stable. `./devnet.sh local`
 closes them and puts everything back.
 
@@ -382,6 +393,8 @@ macOS may ask to allow incoming connections the first time you expose the stack.
 | `DEVNET_DB_PATH` | `./devnet.db` | Move the SQLite file elsewhere |
 | `DEVNET_READONLY` | unset | `1` disables every state-changing route and RPC method |
 | `DEVNET_RPC_ALLOWED_ORIGIN` | `*` | Origin allowed to call `/api/rpc` from a browser |
+| `DEVNET_TUNNEL_PROTOCOL` | `http2` | cloudflared transport; QUIC is blocked on many hotspots |
+| `DEVNET_TUNNEL_RETRIES` | `500` | Reconnect attempts before the tunnel gives up and exits |
 | `DEVNET_EXPLORER_AUTOSYNC` | `1` | `0` stops the explorer from following the node; manage the stack yourself |
 | `DEVNET_RPC_HOST` | `host.docker.internal` | Host the Blockscout indexer reaches the node on. `--docker` sets it to the API container |
 | `DEVNET_PUBLIC_HOST` | `localhost` | Host a *browser* uses for the explorer and the RPC; `devnet.sh expose` rewrites it |

@@ -241,6 +241,22 @@ cmd_status() {
   printf 'explorer ui:  '
   curl -sf -m 3 -o /dev/null "http://localhost:3000/" && echo "up" || echo "down"
 
+  # A dead tunnel is invisible otherwise: the addressing below still names its
+  # hostname, and every local check passes, while the shared URL answers nothing.
+  if [ -f "$TUNNEL_STATE" ]; then
+    echo
+    while read -r pid name; do
+      [ -n "$pid" ] || continue
+      local url
+      url="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_DIR/tunnel-$name.log" 2>/dev/null | head -1)"
+      if kill -0 "$pid" 2>/dev/null; then
+        printf '  tunnel %-8s up    %s\n' "$name" "$url"
+      else
+        printf '  tunnel %-8s DOWN  %s\n' "$name" "(exited — ./devnet.sh tunnel${DOCKER_SUFFIX} to reopen)"
+      fi
+    done < "$TUNNEL_STATE"
+  fi
+
   # What the explorer is telling browsers right now, straight from what it serves.
   local envs app_host api_host rpc
   envs="$(curl -sf -m 3 http://localhost:3000/assets/envs.js 2>/dev/null || true)"
@@ -561,6 +577,13 @@ cmd_proxy() {
 # --protocol defaults to http2: cloudflared prefers QUIC, and a network that
 # blocks UDP/7844 leaves the tunnel registering forever with no useful error.
 TUNNEL_PROTOCOL="${DEVNET_TUNNEL_PROTOCOL:-http2}"
+# cloudflared gives up after five connection errors by default and exits. On a
+# link that drops — a phone hotspot, a laptop changing networks — that ends the
+# tunnel silently: the shared URL simply stops answering, with nothing on screen
+# to say so. Reconnects inside one process keep the same hostname, so retrying
+# for longer is what keeps a shared link working; restarting cloudflared would
+# hand out a different one.
+TUNNEL_RETRIES="${DEVNET_TUNNEL_RETRIES:-500}"
 
 stop_tunnels() {
   [ -f "$TUNNEL_STATE" ] || return 0
@@ -573,7 +596,8 @@ stop_tunnels() {
 # Starts one quick tunnel and echoes its URL. Name is only used for the log file.
 start_tunnel() { # name, local_url
   local name="$1" target="$2" log="$LOG_DIR/tunnel-$1.log" url=""
-  nohup cloudflared tunnel --url "$target" --no-autoupdate --protocol "$TUNNEL_PROTOCOL" \
+  nohup cloudflared tunnel --url "$target" --no-autoupdate \
+    --protocol "$TUNNEL_PROTOCOL" --retries "$TUNNEL_RETRIES" \
     > "$log" 2>&1 &
   echo "$! $name" >> "$TUNNEL_STATE"
 
