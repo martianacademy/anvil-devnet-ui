@@ -290,6 +290,7 @@ a wallet is given, and the WebSocket scheme:
 ./devnet.sh expose 192.168.1.42 # …or name the address yourself
 ./devnet.sh proxy               # http://localhost:8000 — one origin for everything
 ./devnet.sh tunnel              # https://<random>.trycloudflare.com, one origin
+./devnet.sh domain devnet.example.com   # a hostname you already serve
 ```
 
 `status` shows which one is in effect, straight from what the explorer is serving.
@@ -347,6 +348,37 @@ and `./devnet.sh status` reports whether the tunnel is still up:
 
 Quick tunnels get a new hostname on every restart, so these URLs are not stable. `./devnet.sh local`
 closes them and puts everything back.
+
+### A hostname of your own
+
+`domain` points the explorer at an address you already serve — a named Cloudflare tunnel, a reverse
+proxy, a VPS — over HTTPS with no port, which is what anything terminating TLS actually serves.
+Nothing is started: the address exists already, and this only tells the explorer about it.
+
+```bash
+./devnet.sh domain devnet.example.com
+```
+
+Whatever terminates TLS for that hostname forwards to `http://localhost:8000`. With a named
+Cloudflare tunnel that is one ingress rule:
+
+```yaml
+ingress:
+  - hostname: devnet.example.com
+    service: http://localhost:8000
+  - service: http_status:404
+```
+
+Two things a named tunnel gets you over a quick one: the hostname survives restarts, so nobody has to
+re-add the network; and `trycloudflare.com` is blocked outright by some mobile carriers, which a
+phone reports only as a failure to fetch the chain id.
+
+A stable hostname is also found in ways a random URL is not. Run the control API read-only for
+anything you leave up:
+
+```bash
+./devnet.sh down && DEVNET_READONLY=1 ./devnet.sh up && ./devnet.sh domain devnet.example.com
+```
 
 | Share this | For |
 | --- | --- |

@@ -9,7 +9,8 @@
 #   ./devnet.sh local       address everything as localhost
 #   ./devnet.sh expose [ip] address everything as your LAN address
 #   ./devnet.sh proxy       put the explorer, the API and the RPC on one origin
-#   ./devnet.sh tunnel      address everything as public HTTPS (Cloudflare)
+#   ./devnet.sh tunnel      address everything as public HTTPS (Cloudflare quick tunnel)
+#   ./devnet.sh domain <host>  address everything as a hostname you already serve
 #   ./devnet.sh fork <url>  fork a chain and reindex the explorer for it
 #
 # Add --docker to `up`, `down`, `reset` or `status` to run the control API, the
@@ -658,6 +659,42 @@ cmd_tunnel() {
   echo "      ./devnet.sh local${DOCKER_SUFFIX}"
 }
 
+# A hostname you route yourself — a named Cloudflare tunnel, a reverse proxy, a
+# VPS. Everything the browser is told is that one host over HTTPS with no port,
+# which is what a tunnel or a proxy terminating TLS actually serves. Unlike
+# `tunnel`, nothing is started here: the address already exists and this only
+# tells the explorer about it.
+cmd_domain() {
+  local host="${1:-}"
+  [ -n "$host" ] || { echo "🚨 Give the hostname: ./devnet.sh domain devanvil.example.com" >&2; exit 1; }
+  host="${host#http://}"; host="${host#https://}"; host="${host%%/*}"
+
+  mkdir -p "$LOG_DIR"
+  stop_tunnels
+  local chain
+  chain="$(active_node_chain)"
+
+  echo "→ routing everything through one origin on port $DEVNET_PROXY_PORT"
+  single_origin_up
+
+  echo "→ addressing the explorer as https://$host"
+  apply_public_config https "$host" "" https "$host" "" wss "https://$host/rpc"
+
+  echo
+  echo "Served at:"
+  echo "  Explorer:  https://$host"
+  echo "  DevNet:    https://$host/devnet"
+  echo "  API:       https://$host/api/v2"
+  echo "  RPC:       https://$host/rpc     (chain id $chain)"
+  echo
+  echo "  Point whatever terminates TLS for $host at http://localhost:$DEVNET_PROXY_PORT."
+  echo
+  echo "⚠️  A stable hostname is found in a way a random tunnel URL is not, and the"
+  echo "    RPC is only screened while the control API runs read-only. For anything"
+  echo "    left up:"
+  echo "      ./devnet.sh down${DOCKER_SUFFIX} && DEVNET_READONLY=1 ./devnet.sh up${DOCKER_SUFFIX} && ./devnet.sh domain $host"
+}
+
 cmd_local() {
   mkdir -p "$LOG_DIR"
   stop_tunnels
@@ -678,6 +715,7 @@ case "${1:-up}" in
   local) cmd_local ;;
   proxy) cmd_proxy ;;
   tunnel) cmd_tunnel ;;
+  domain) cmd_domain "${2:-}" ;;
   fork) cmd_fork "${2:-}" "${3:-}" ;;
   *) sed -n '2,15p' "$0"; exit 1 ;;
 esac
