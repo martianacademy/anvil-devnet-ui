@@ -11,6 +11,7 @@
 #   ./devnet.sh proxy       put the explorer, the API and the RPC on one origin
 #   ./devnet.sh tunnel      address everything as public HTTPS (Cloudflare quick tunnel)
 #   ./devnet.sh domain <host>  address everything as a hostname you already serve
+#   ./devnet.sh reconnect   bring the public address back without touching the stack
 #   ./devnet.sh fork <url>  fork a chain and reindex the explorer for it
 #
 # Add --docker to `up`, `down`, `reset` or `status` to run the control API, the
@@ -742,6 +743,90 @@ cmd_domain() {
   echo "      ./devnet.sh down${DOCKER_SUFFIX} && DEVNET_READONLY=1 ./devnet.sh up${DOCKER_SUFFIX} && ./devnet.sh domain $host"
 }
 
+# The tunnel dies far more often than the stack does — a link drops, a laptop
+# sleeps, cloudflared runs out of retries — and the containers carry on serving
+# perfectly the whole time. Rebuilding addressing from scratch would recreate the
+# explorer for nothing, so this reopens only what actually died.
+#
+# What that takes depends on the kind of tunnel, which is the whole reason this
+# is not one command:
+#
+#   named tunnel  the hostname is fixed, so reconnecting is all there is to do —
+#                 nothing the explorer was told has changed
+#   quick tunnel  every restart hands out a different hostname, so the explorer
+#                 has to be re-addressed, which does mean recreating it
+cmd_reconnect() {
+  mkdir -p "$LOG_DIR"
+
+  # Reconnecting in front of a stack that is not running would produce a public
+  # address serving 502s, which is worse than saying so.
+  curl -sf -m 5 -o /dev/null "http://localhost:$DEVNET_API_PORT/api/anvil/status" || {
+    echo "🚨 The control API is not answering — start the stack first: ./devnet.sh up${DOCKER_SUFFIX}" >&2
+    exit 1
+  }
+
+  # What the explorer is currently telling browsers is the only reliable record
+  # of which mode is in effect; nothing else survives a reboot.
+  local host
+  host="$(curl -sf -m 5 "http://localhost:3000/assets/envs.js" 2>/dev/null \
+    | sed -n 's/.*NEXT_PUBLIC_APP_HOST: "\([^"]*\)".*/\1/p' | head -1)"
+
+  case "$host" in
+    ""|localhost|127.0.0.1|[0-9]*)
+      echo "🚨 Nothing public to reconnect — the explorer is addressed as ${host:-localhost}." >&2
+      echo "   ./devnet.sh tunnel${DOCKER_SUFFIX} or ./devnet.sh domain <host> first." >&2
+      exit 1
+      ;;
+    *.trycloudflare.com)
+      echo "→ quick tunnel: reopening (the hostname will change)"
+      cmd_tunnel
+      ;;
+    *)
+      reconnect_named "$host"
+      ;;
+  esac
+}
+
+# A named tunnel keeps its hostname, so the explorer needs no changes — only the
+# process has to come back. Which tunnel is named in the config, since that is
+# what routes the hostname.
+reconnect_named() {
+  local host="$1" name
+  command -v cloudflared >/dev/null 2>&1 || {
+    echo "🚨 $host is served by something other than cloudflared — restart it yourself." >&2
+    exit 1
+  }
+
+  name="$(sed -n 's/^tunnel:[[:space:]]*//p' "$HOME/.cloudflared/config.yml" 2>/dev/null | head -1)"
+  [ -n "$name" ] || {
+    echo "🚨 No tunnel named in ~/.cloudflared/config.yml — restart your tunnel yourself." >&2
+    exit 1
+  }
+
+  if pgrep -f "cloudflared.*run .*$name" >/dev/null 2>&1; then
+    echo "  ✓ tunnel already running — $host needs nothing"
+  else
+    echo "→ restarting the named tunnel"
+    nohup cloudflared tunnel --protocol "$TUNNEL_PROTOCOL" --retries "$TUNNEL_RETRIES" run "$name" \
+      > "$LOG_DIR/tunnel-named.log" 2>&1 &
+    disown 2>/dev/null || true
+    for _ in $(seq 1 30); do
+      grep -q "Registered tunnel connection" "$LOG_DIR/tunnel-named.log" 2>/dev/null && break
+      sleep 2
+    done
+    grep -q "Registered tunnel connection" "$LOG_DIR/tunnel-named.log" 2>/dev/null \
+      && echo "  ✓ reconnected" \
+      || { echo "  ✗ did not reconnect — see $LOG_DIR/tunnel-named.log" >&2; exit 1; }
+  fi
+
+  # The front door resolved the containers once; if any were recreated while the
+  # tunnel was away, it is still dialling addresses that have gone.
+  refresh_front_door
+
+  echo
+  echo "Back at https://$host — the explorer was not touched, so nothing to re-add."
+}
+
 cmd_local() {
   mkdir -p "$LOG_DIR"
   stop_tunnels
@@ -763,6 +848,7 @@ case "${1:-up}" in
   proxy) cmd_proxy ;;
   tunnel) cmd_tunnel ;;
   domain) cmd_domain "${2:-}" ;;
+  reconnect) cmd_reconnect ;;
   fork) cmd_fork "${2:-}" "${3:-}" ;;
   *) sed -n '2,15p' "$0"; exit 1 ;;
 esac

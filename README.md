@@ -368,6 +368,26 @@ and `./devnet.sh status` reports whether the tunnel is still up:
 Quick tunnels get a new hostname on every restart, so these URLs are not stable. `./devnet.sh local`
 closes them and puts everything back.
 
+### When the tunnel drops
+
+The tunnel dies far more often than the stack does — a link drops, a laptop sleeps, cloudflared runs
+out of retries — while the containers carry on serving perfectly:
+
+```bash
+./devnet.sh reconnect
+```
+
+It reopens only what died. What that takes depends on the kind of tunnel, which is why it is not the
+same work in both cases:
+
+- **A named tunnel** keeps its hostname, so reconnecting is all there is to do. Nothing the explorer
+  was told has changed, so nothing is recreated and nobody has to re-add the network.
+- **A quick tunnel** gets a different hostname every restart, so the explorer has to be re-addressed
+  — and that does mean recreating it.
+
+It refuses to run in front of a stack that is down, rather than handing you a public address that
+serves 502s.
+
 ### A hostname of your own
 
 `domain` points the explorer at an address you already serve — a named Cloudflare tunnel, a reverse
