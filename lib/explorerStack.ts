@@ -181,6 +181,25 @@ const BACKEND_URL = process.env.DEVNET_EXPLORER_API ?? "http://localhost/api/v2/
 
 /** True when this API is itself one of the containers in the stack it manages. */
 const IN_STACK = process.env.DEVNET_STACK_MODE === "docker";
+
+/**
+ * Is the single-origin front door in use?
+ *
+ * It matters here because recreating Blockscout's nginx resets FRONT_PROXY_PASS
+ * to the stock frontend unless devnet-proxy.yml is in the file set — the
+ * explorer comes back serving Blockscout's own UI, and /devnet answers 404.
+ */
+function frontDoorRunning(): boolean {
+    try {
+        const names = execFileSync("docker", [ "ps", "--format", "{{.Names}}" ], {
+            encoding: "utf8",
+            timeout: 5_000,
+        });
+        return names.split("\n").some((name) => name.trim() === "devnet-proxy");
+    } catch {
+        return false;
+    }
+}
 const READY_TIMEOUT_MS = 4 * 60 * 1000;
 
 function run(command: string, args: string[], options: { cwd?: string; env?: Record<string, string>; timeoutMs?: number }): Promise<string> {
@@ -317,6 +336,10 @@ export function syncExplorer(chainId: number, port: number): ExplorerSyncState {
         .catch(() => { })
         .then(async () => {
             const compose = [ "compose", "-f", "anvil.yml", "-f", "devnet.override.yml" ];
+            const withFrontDoor = frontDoorRunning();
+            if (withFrontDoor) {
+                compose.push("-f", "devnet-proxy.yml");
+            }
 
             // --timeout caps the backend's five-minute stop grace period.
             await run("docker", [ ...compose, "down", "-v", "--timeout", "15" ], { cwd: dir, env, timeoutMs: 180_000 });
@@ -333,6 +356,12 @@ export function syncExplorer(chainId: number, port: number): ExplorerSyncState {
 
             // nginx resolves the backend once at boot; a recreated backend gets a new IP.
             await run("docker", [ "restart", "proxy" ], { cwd: dir, timeoutMs: 60_000 }).catch(() => { });
+
+            // And the front door resolved *those* once, so it is now pointing at
+            // addresses that no longer exist — 502 on everything it forwards.
+            if (withFrontDoor) {
+                await run("docker", [ "restart", "devnet-proxy" ], { cwd: dir, timeoutMs: 60_000 }).catch(() => { });
+            }
 
             // The host path rewrites the frontend's .env.local; a containerised UI
             // has no such file — its network identity comes from compose, so the
