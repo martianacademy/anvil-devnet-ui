@@ -214,7 +214,7 @@ The network column is only reachable after `./devnet.sh expose` — see
 | http://localhost/api/v2 | Blockscout REST API |
 | http://localhost:3010/api | DevNet Control API (this repo) |
 | http://localhost:3010/api/explorer | Etherscan-compatible read API |
-| http://127.0.0.1:8546 | The devnet JSON-RPC endpoint (whatever port the node runs on) |
+| http://127.0.0.1:8545 | The devnet JSON-RPC endpoint (whatever port the node runs on) |
 
 ---
 
@@ -267,7 +267,7 @@ the code you want at the address you want:
 # a local BNB Chain devnet — no fork, no upstream history
 curl -X POST http://localhost:3010/api/anvil/start \
   -H "Content-Type: application/json" \
-  -d '{ "chainId": 56, "port": 8546, "blockTime": 2, "accounts": 10, "balance": 10000 }'
+  -d '{ "chainId": 56, "port": 8545, "blockTime": 15, "accounts": 10, "balance": 10000 }'
 ```
 
 Then use the state patches to make a mainnet address behave like the real thing. `/api/patches/code`
@@ -422,7 +422,7 @@ anything you leave up:
 | Share this | For |
 | --- | --- |
 | `http://<your-ip>:3000` | The explorer |
-| `http://<your-ip>:8546` | The RPC endpoint (add as a custom network, using your chain id) |
+| `http://<your-ip>:8545` | The RPC endpoint (add as a custom network, using your chain id) |
 | `http://<your-ip>/api/v2` | Blockscout's REST API |
 
 `./devnet.sh local` puts it back. Re-run `expose` if your IP changes — a laptop that switches
@@ -458,7 +458,7 @@ macOS may ask to allow incoming connections the first time you expose the stack.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DEVNET_API_PORT` | `3010` | Port the control API listens on |
-| `DEVNET_RPC_PORT` | `8546` | Anvil port to manage and index when no project is running |
+| `DEVNET_RPC_PORT` | `8545` | Anvil port to manage and index when no project is running |
 | `DEVNET_CHAIN_ID` | `31337` | Chain id assumed before a node is started |
 | `DEVNET_BLOCK_TIME` | `15` | Seconds between blocks; `0` mines only on transactions |
 | `stateInterval` (start body) | `30` | Seconds between state dumps; `0` dumps only on a clean exit |
@@ -585,12 +585,12 @@ Scope any request to a specific project with `?projectId=…` or the `x-project-
 # Local chain
 curl -X POST http://localhost:3010/api/anvil/start \
   -H "Content-Type: application/json" \
-  -d '{ "chainId": 31337, "port": 8546, "accounts": 10, "balance": 10000 }'
+  -d '{ "chainId": 31337, "port": 8545, "accounts": 10, "balance": 10000 }'
 
 # Fork BSC mainnet
 curl -X POST http://localhost:3010/api/anvil/start \
   -H "Content-Type: application/json" \
-  -d '{ "chainId": 56, "port": 8546, "forkUrl": "https://bsc-dataseed.binance.org" }'
+  -d '{ "chainId": 56, "port": 8545, "forkUrl": "https://bsc-dataseed.binance.org" }'
 ```
 
 ### EVM control

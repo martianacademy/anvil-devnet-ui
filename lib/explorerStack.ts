@@ -183,6 +183,58 @@ const BACKEND_URL = process.env.DEVNET_EXPLORER_API ?? "http://localhost/api/v2/
 const IN_STACK = process.env.DEVNET_STACK_MODE === "docker";
 
 /**
+ * The addressing the explorer is currently serving, read back off its container.
+ *
+ * Recreating it to pick up a new chain would otherwise reset every NEXT_PUBLIC_*
+ * to the compose defaults — so a node restart silently moved a devnet published
+ * on a domain or a tunnel back to localhost, and the only sign was a wallet
+ * being handed an address on the visitor's own machine.
+ *
+ * The RPC URL is the one value that cannot simply be carried over: outside
+ * single origin it names the node's port, which is exactly what just changed.
+ * A path-based URL (single origin, "https://host/rpc") is port-free and kept;
+ * anything else is rebuilt around the new port.
+ */
+function currentPublicEnv(port: number): Record<string, string> {
+    const carried: Record<string, string> = {};
+    try {
+        const raw = execFileSync("docker", [ "inspect", "devnet-ui", "--format", "{{json .Config.Env}}" ], {
+            encoding: "utf8",
+            stdio: [ "ignore", "pipe", "ignore" ],
+            timeout: 5_000,
+        });
+        const env: string[] = JSON.parse(raw);
+        const read = (key: string) => env.find((e) => e.startsWith(`${key}=`))?.slice(key.length + 1) ?? "";
+
+        const pairs: Array<[string, string]> = [
+            [ "DEVNET_PUBLIC_PROTOCOL", "NEXT_PUBLIC_APP_PROTOCOL" ],
+            [ "DEVNET_PUBLIC_HOST", "NEXT_PUBLIC_APP_HOST" ],
+            [ "DEVNET_PUBLIC_PORT", "NEXT_PUBLIC_APP_PORT" ],
+            [ "DEVNET_API_PROTOCOL", "NEXT_PUBLIC_API_PROTOCOL" ],
+            [ "DEVNET_API_PUBLIC_HOST", "NEXT_PUBLIC_API_HOST" ],
+            [ "DEVNET_API_PUBLIC_PORT", "NEXT_PUBLIC_API_PORT" ],
+            [ "DEVNET_WS_PROTOCOL", "NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL" ],
+        ];
+        for (const [ target, source ] of pairs) {
+            const value = read(source);
+            // An empty port is meaningful — behind a tunnel it has to stay empty.
+            if (value !== "" || target.endsWith("_PORT")) carried[target] = value;
+        }
+
+        const rpc = read("NEXT_PUBLIC_NETWORK_RPC_URL");
+        const host = carried.DEVNET_PUBLIC_HOST;
+        if (rpc.endsWith("/rpc")) {
+            carried.DEVNET_PUBLIC_RPC_URL = rpc;
+        } else if (host) {
+            carried.DEVNET_PUBLIC_RPC_URL = `${carried.DEVNET_PUBLIC_PROTOCOL || "http"}://${host}:${port}`;
+        }
+    } catch {
+        /* not running, or not the container path — compose defaults are right */
+    }
+    return carried;
+}
+
+/**
  * Is the single-origin front door in use?
  *
  * It matters here because recreating Blockscout's nginx resets FRONT_PROXY_PASS
@@ -371,7 +423,7 @@ export function syncExplorer(chainId: number, port: number): ExplorerSyncState {
                 await run("docker", [
                     ...compose, "-f", "devnet-stack.yml",
                     "up", "-d", "--force-recreate", "--no-deps", "--pull", "never", "devnet-ui",
-                ], { cwd: dir, env, timeoutMs: 180_000 }).catch(() => { });
+                ], { cwd: dir, env: { ...env, ...currentPublicEnv(port) }, timeoutMs: 180_000 }).catch(() => { });
             } else {
                 await syncFrontend(chainId, port).catch(() => { });
             }

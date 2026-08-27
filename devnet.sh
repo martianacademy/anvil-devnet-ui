@@ -36,7 +36,11 @@ COMPOSE_DIR="$WORKSPACE/blockscout/docker-compose"
 FRONTEND_DIR="$WORKSPACE/blockscout-frontend"
 LOG_DIR="$WORKSPACE/.devnet-logs"
 
-export DEVNET_RPC_PORT="${DEVNET_RPC_PORT:-8546}"
+# 8545 is Anvil's own default, which is what every wallet, script and tutorial
+# already assumes. The container path publishes it from inside devnet-api, so a
+# node you started by hand on the host does not collide; on the from-source path
+# it can, and DEVNET_RPC_PORT moves it.
+export DEVNET_RPC_PORT="${DEVNET_RPC_PORT:-8545}"
 export DEVNET_CHAIN_ID="${DEVNET_CHAIN_ID:-31337}"
 export DEVNET_API_PORT="${DEVNET_API_PORT:-3010}"
 # Blockscout indexes from here; a fork must set it or the catchup indexer walks

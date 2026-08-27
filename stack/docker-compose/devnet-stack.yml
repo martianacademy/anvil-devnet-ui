@@ -20,10 +20,10 @@ services:
     ports:
       - "${DEVNET_API_PORT:-3010}:3010"
       # Anvil runs inside this container, so the RPC is published from here.
-      - "${DEVNET_RPC_PORT:-8546}:${DEVNET_RPC_PORT:-8546}"
+      - "${DEVNET_RPC_PORT:-8545}:${DEVNET_RPC_PORT:-8545}"
     environment:
       DEVNET_API_PORT: "3010"
-      DEVNET_RPC_PORT: "${DEVNET_RPC_PORT:-8546}"
+      DEVNET_RPC_PORT: "${DEVNET_RPC_PORT:-8545}"
       DEVNET_CHAIN_ID: "${DEVNET_CHAIN_ID:-31337}"
       DEVNET_READONLY: "${DEVNET_READONLY:-}"
       # The node lives in this container, so that is where the indexer must look.
@@ -88,7 +88,7 @@ services:
       NEXT_PUBLIC_NETWORK_CURRENCY_NAME: "${DEVNET_CURRENCY_NAME:-Ether}"
       NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: "${DEVNET_CURRENCY_SYMBOL:-ETH}"
       NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: "18"
-      NEXT_PUBLIC_NETWORK_RPC_URL: "${DEVNET_PUBLIC_RPC_URL:-http://localhost:8546}"
+      NEXT_PUBLIC_NETWORK_RPC_URL: "${DEVNET_PUBLIC_RPC_URL:-http://localhost:8545}"
       NEXT_PUBLIC_IS_ACCOUNT_SUPPORTED: "false"
       # Server-side only: the UI proxies /api/devnet/* over the compose network.
       DEVNET_API_URL: http://devnet-api:3010

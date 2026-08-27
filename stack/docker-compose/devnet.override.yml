@@ -10,9 +10,9 @@
 services:
   backend:
     environment:
-      ETHEREUM_JSONRPC_HTTP_URL: http://${DEVNET_RPC_HOST:-host.docker.internal}:${DEVNET_RPC_PORT:-8546}/
-      ETHEREUM_JSONRPC_TRACE_URL: http://${DEVNET_RPC_HOST:-host.docker.internal}:${DEVNET_RPC_PORT:-8546}/
-      ETHEREUM_JSONRPC_WS_URL: ws://${DEVNET_RPC_HOST:-host.docker.internal}:${DEVNET_RPC_PORT:-8546}/
+      ETHEREUM_JSONRPC_HTTP_URL: http://${DEVNET_RPC_HOST:-host.docker.internal}:${DEVNET_RPC_PORT:-8545}/
+      ETHEREUM_JSONRPC_TRACE_URL: http://${DEVNET_RPC_HOST:-host.docker.internal}:${DEVNET_RPC_PORT:-8545}/
+      ETHEREUM_JSONRPC_WS_URL: ws://${DEVNET_RPC_HOST:-host.docker.internal}:${DEVNET_RPC_PORT:-8545}/
       CHAIN_ID: '${DEVNET_CHAIN_ID:-31337}'
       # A fork starts at mainnet's height, so without these the catchup indexer
       # would try to backfill every block from genesis through the fork RPC.
@@ -36,14 +36,14 @@ services:
   # — it crash-looped, or silently watched whatever happened to be on 8545.
   user-ops-indexer:
     environment:
-      USER_OPS_INDEXER__INDEXER__RPC_URL: ws://${DEVNET_RPC_HOST:-host.docker.internal}:${DEVNET_RPC_PORT:-8546}/
+      USER_OPS_INDEXER__INDEXER__RPC_URL: ws://${DEVNET_RPC_HOST:-host.docker.internal}:${DEVNET_RPC_PORT:-8545}/
 
   frontend:
     environment:
       NEXT_PUBLIC_NETWORK_ID: '${DEVNET_CHAIN_ID:-31337}'
       # A browser resolves this, not a container — host.docker.internal means
       # nothing outside Docker. `devnet.sh expose` rewrites it to the LAN address.
-      NEXT_PUBLIC_NETWORK_RPC_URL: http://${DEVNET_PUBLIC_HOST:-localhost}:${DEVNET_RPC_PORT:-8546}/
+      NEXT_PUBLIC_NETWORK_RPC_URL: http://${DEVNET_PUBLIC_HOST:-localhost}:${DEVNET_RPC_PORT:-8545}/
       NEXT_PUBLIC_NETWORK_NAME: Anvil DevNet
       NEXT_PUBLIC_NETWORK_SHORT_NAME: DevNet
       NEXT_PUBLIC_NETWORK_CURRENCY_NAME: Ether
