@@ -664,6 +664,48 @@ cmd_tunnel() {
 # which is what a tunnel or a proxy terminating TLS actually serves. Unlike
 # `tunnel`, nothing is started here: the address already exists and this only
 # tells the explorer about it.
+#
+# ── Serving it on your own domain with a named Cloudflare tunnel ─────────────
+#
+# Worth doing over `tunnel` for two reasons, both learned the hard way: a quick
+# tunnel hands out a new hostname on every restart, so everyone testing has to
+# re-add the network each time — and trycloudflare.com is blocked outright by
+# some mobile carriers, which a phone reports only as a failure to fetch the
+# chain id.
+#
+# Once, per machine:
+#
+#   cloudflared tunnel login                 # pick the zone in the browser
+#   cloudflared tunnel create devnet         # writes <uuid>.json to ~/.cloudflared
+#
+# Once, per hostname:
+#
+#   cloudflared tunnel route dns devnet devanvil.example.com
+#
+# Then in ~/.cloudflared/config.yml, pointing at the single-origin front door —
+# one rule serves the explorer, Blockscout's API and the RPC together, because
+# devnet-proxy already splits them by path:
+#
+#   tunnel: <uuid>
+#   credentials-file: /Users/you/.cloudflared/<uuid>.json
+#   ingress:
+#     - hostname: devanvil.example.com
+#       service: http://localhost:8000      # DEVNET_PROXY_PORT
+#     - service: http_status:404            # catch-all — must stay last
+#
+# One tunnel can carry several apps; add a rule per hostname, in order, since the
+# first match wins. `cloudflared tunnel ingress validate` checks the file, and an
+# edit needs the tunnel restarted to take effect.
+#
+#   cloudflared tunnel --protocol http2 run devnet
+#   ./devnet.sh domain devanvil.example.com
+#
+# --protocol http2 for the same reason `tunnel` defaults to it: cloudflared
+# prefers QUIC, and a network that blocks UDP/7844 leaves it retrying behind
+# Cloudflare's error 1033 with nothing useful on screen.
+#
+# A stable hostname is found in ways a random URL is not, so run the control API
+# read-only for anything left up — DEVNET_READONLY=1 on `up`.
 cmd_domain() {
   local host="${1:-}"
   [ -n "$host" ] || { echo "🚨 Give the hostname: ./devnet.sh domain devanvil.example.com" >&2; exit 1; }
