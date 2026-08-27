@@ -23,11 +23,12 @@ export async function POST(_req: Request, { params }: RouteParams) {
         const config: AnvilConfig = {
             chainId: project.chain_id,
             port: project.port,
-            blockTime: existingConfig.blockTime ?? 2,
+            blockTime: existingConfig.blockTime ?? 15,
             accounts: existingConfig.accounts ?? 10,
             balance: existingConfig.balance ?? 10000,
             baseFee: existingConfig.baseFee ?? 0,
             stepsTracing: existingConfig.stepsTracing !== false,
+            stateInterval: existingConfig.stateInterval ?? 30,
             persistState: existingConfig.persistState !== false,
             stateFile: stateFilePath(id, project.chain_id, Boolean(project.fork_url)),
             forkUrl: project.fork_url ?? undefined,

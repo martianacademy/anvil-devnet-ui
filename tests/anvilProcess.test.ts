@@ -13,6 +13,7 @@ const base: AnvilConfig = {
     baseFee: 0,
     stepsTracing: true,
     persistState: false,
+    stateInterval: 30,
     stateFile: "",
 };
 
@@ -51,12 +52,26 @@ test("fork settings add the fork flags and pin the block", () => {
     assert.ok(args.includes("--no-storage-caching"));
 });
 
-test("persistState only dumps state when asked", () => {
-    assert.ok(!buildAnvilArgs(base, "/tmp/state.json").includes("--dump-state"));
+test("persistState only persists when asked", () => {
+    assert.ok(!buildAnvilArgs(base, "/tmp/state.json").includes("--state"));
     assert.equal(
-        argValue(buildAnvilArgs({ ...base, persistState: true }, "/tmp/state.json"), "--dump-state"),
+        argValue(buildAnvilArgs({ ...base, persistState: true }, "/tmp/state.json"), "--state"),
         "/tmp/state.json"
     );
+});
+
+test("state is dumped on an interval, not only at exit", () => {
+    // --dump-state writes on a clean exit and nowhere else, so a node that is
+    // killed or whose container is recreated loses everything since it started.
+    const args = buildAnvilArgs({ ...base, persistState: true }, "/tmp/state.json");
+    assert.equal(argValue(args, "--state-interval"), "30");
+    assert.ok(!args.includes("--dump-state"), "--state already implies load and dump");
+});
+
+test("a zero interval leaves the dump to a clean exit", () => {
+    const args = buildAnvilArgs({ ...base, persistState: true, stateInterval: 0 }, "/tmp/state.json");
+    assert.ok(!args.includes("--state-interval"));
+    assert.equal(argValue(args, "--state"), "/tmp/state.json");
 });
 
 test("no-mining is passed through", () => {

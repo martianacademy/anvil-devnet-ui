@@ -26,6 +26,8 @@ export interface AnvilConfig {
     baseFee: number;
     stepsTracing: boolean;
     persistState: boolean;
+    /** Seconds between state dumps. 0 dumps only on a clean exit. */
+    stateInterval: number;
     stateFile: string;
     forkUrl?: string;
     forkBlockNumber?: number;
@@ -236,8 +238,14 @@ export function buildAnvilArgs(config: AnvilConfig, stateFile: string): string[]
     if (config.noMining) args.push("--no-mining");
 
     if (config.persistState) {
-        if (fs.existsSync(stateFile)) args.push("--load-state", stateFile);
-        args.push("--dump-state", stateFile);
+        // --state is load-and-dump on one file, so a restart picks the chain up
+        // where it stopped. --dump-state alone only writes on a clean exit, and
+        // a node that is killed, crashes, or has its container recreated — all
+        // of which happen — loses everything since it started.
+        args.push("--state", stateFile);
+        if (config.stateInterval > 0) {
+            args.push("--state-interval", String(config.stateInterval));
+        }
     }
 
     return args;

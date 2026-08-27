@@ -17,6 +17,15 @@ const DEFAULTS = {
     accounts: 10,
     balance: 10000,
     baseFee: 0,
+    /**
+     * How often the chain is written to disk.
+     *
+     * Anvil's --dump-state writes on a clean exit and nowhere else, so a node
+     * that is killed, crashes, or has its container recreated loses everything
+     * since it started. Thirty seconds bounds that to roughly two blocks at the
+     * default block time, for one small write.
+     */
+    stateInterval: 30,
 } as const;
 
 /** Validate + normalise an incoming Anvil config so bad input can't reach the CLI. */
@@ -30,6 +39,7 @@ export function parseAnvilConfig(body: Record<string, unknown>): AnvilConfig {
         baseFee: assertInt(body.baseFee ?? DEFAULTS.baseFee, "baseFee", 0, Number.MAX_SAFE_INTEGER),
         stepsTracing: body.stepsTracing !== false,
         persistState: body.persistState !== false,
+        stateInterval: assertInt(body.stateInterval ?? DEFAULTS.stateInterval, "stateInterval", 0, 86400),
         stateFile: typeof body.stateFile === "string" ? body.stateFile : "",
         forkUrl: body.forkUrl ? assertHttpUrl(body.forkUrl, "forkUrl") : undefined,
         forkBlockNumber: body.forkBlockNumber

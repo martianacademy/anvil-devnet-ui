@@ -23,6 +23,7 @@ const config = (port: number, chainId: number) => ({
     baseFee: 0,
     stepsTracing: true,
     persistState: false,
+    stateInterval: 0,
     stateFile: "",
 });
 
