@@ -116,8 +116,13 @@ start_anvil() {
   fi
   # --host 0.0.0.0 so the Blockscout containers can reach it via host.docker.internal;
   # nohup so it outlives the shell that ran this script.
+  #
+  # --block-time 15 rather than 2: time still moves for contracts that depend on
+  # it, but a chain left running writes a seventh as many empty blocks, each of
+  # which costs about 1.7 KB in the state dump. DEVNET_BLOCK_TIME=0 mines only on
+  # transactions, and then anything time-dependent needs /api/anvil/time.
   nohup anvil --host 0.0.0.0 --port "$DEVNET_RPC_PORT" --chain-id "$DEVNET_CHAIN_ID" \
-        --block-time 2 --steps-tracing > "$LOG_DIR/anvil.log" 2>&1 &
+        --block-time "${DEVNET_BLOCK_TIME:-15}" --steps-tracing > "$LOG_DIR/anvil.log" 2>&1 &
   sleep 3
   echo "  ✓ anvil started on $DEVNET_RPC_PORT"
 }

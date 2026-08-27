@@ -8,7 +8,12 @@ import { handleRoute } from "@/lib/route";
 const DEFAULTS = {
     chainId: 31337,
     port: Number(process.env.DEVNET_RPC_PORT ?? 8545) || 8545,
-    blockTime: 2,
+    // Time still advances for contracts that need it — cooldowns, vesting,
+    // staking — while a chain left running does not spend the day writing empty
+    // blocks into the state dump. Each empty block costs about 1.7 KB there, so
+    // two seconds is ~3 MB a day and fifteen is ~0.4 MB. Set 0 to mine only on
+    // transactions; anything time-dependent then needs /api/anvil/time.
+    blockTime: 15,
     accounts: 10,
     balance: 10000,
     baseFee: 0,

@@ -421,6 +421,7 @@ macOS may ask to allow incoming connections the first time you expose the stack.
 | `DEVNET_API_PORT` | `3010` | Port the control API listens on |
 | `DEVNET_RPC_PORT` | `8546` | Anvil port to manage and index when no project is running |
 | `DEVNET_CHAIN_ID` | `31337` | Chain id assumed before a node is started |
+| `DEVNET_BLOCK_TIME` | `15` | Seconds between blocks; `0` mines only on transactions |
 | `DEVNET_WORKSPACE` | parent of this repo | Where `blockscout/` and `blockscout-frontend/` are cloned |
 | `DEVNET_DB_PATH` | `./devnet.db` | Move the SQLite file elsewhere |
 | `DEVNET_READONLY` | unset | `1` disables every state-changing route and RPC method |
