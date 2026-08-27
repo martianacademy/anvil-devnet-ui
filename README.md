@@ -218,6 +218,25 @@ The network column is only reachable after `./devnet.sh expose` — see
 
 ---
 
+## The chain survives a restart
+
+A node is started with Anvil's `--state`, which loads the previous chain on the way up and writes it
+back as it runs — so stopping and starting the same chain picks up where it left off, patched
+balances and installed contracts included.
+
+The writing happens on an interval (`stateInterval`, 30 seconds by default) rather than only at exit.
+`--dump-state` alone writes on a clean shutdown and nowhere else, so a node that is killed, crashes,
+or has its container recreated loses everything since it started — all three of which happen.
+
+Two things worth knowing:
+
+- Every block Anvil mines costs about 1.7 KB in that file whether or not anything happened in it,
+  which is why the default block time is 15 seconds rather than 2. A chain left running for weeks
+  still grows; `./devnet.sh reset` clears it.
+- `persistState: false` on `/api/anvil/start` turns it off for a throwaway chain.
+
+---
+
 ## Chain id, restarts and the explorer index
 
 Starting or resetting a node from `/devnet` reconfigures Blockscout automatically:
@@ -422,6 +441,7 @@ macOS may ask to allow incoming connections the first time you expose the stack.
 | `DEVNET_RPC_PORT` | `8546` | Anvil port to manage and index when no project is running |
 | `DEVNET_CHAIN_ID` | `31337` | Chain id assumed before a node is started |
 | `DEVNET_BLOCK_TIME` | `15` | Seconds between blocks; `0` mines only on transactions |
+| `stateInterval` (start body) | `30` | Seconds between state dumps; `0` dumps only on a clean exit |
 | `DEVNET_WORKSPACE` | parent of this repo | Where `blockscout/` and `blockscout-frontend/` are cloned |
 | `DEVNET_DB_PATH` | `./devnet.db` | Move the SQLite file elsewhere |
 | `DEVNET_READONLY` | unset | `1` disables every state-changing route and RPC method |
@@ -532,7 +552,7 @@ Scope any request to a specific project with `?projectId=…` or the `x-project-
 
 | Method | Route | Body / params | Description |
 | --- | --- | --- | --- |
-| `POST` | `/api/anvil/start` | `{ chainId, port, blockTime, accounts, balance, baseFee, forkUrl?, forkBlockNumber? }` | Spawn Anvil; the fork block is pinned automatically |
+| `POST` | `/api/anvil/start` | `{ chainId, port, blockTime, accounts, balance, baseFee, stateInterval?, persistState?, forkUrl?, forkBlockNumber? }` | Spawn Anvil; the fork block is pinned automatically |
 | `POST` | `/api/anvil/stop` | — | SIGTERM, then SIGKILL after 3 s, then free the port |
 | `GET` | `/api/anvil/status` | — | `{ running, managed, pid, port, chainId, blockNumber, gasPrice, uptime, lastError, config, configSource, explorer }` — `config` is read off the running node, `explorer` reports the chain and port Blockscout is indexing plus any sync in progress |
 | `GET` | `/api/anvil/logs` | `?limit=200` | Recent process output, the log path and the last start error |
