@@ -836,35 +836,46 @@ cmd_reconnect() {
 }
 
 # A named tunnel keeps its hostname, so the explorer needs no changes — only the
-# process has to come back. Which tunnel is named in the config, since that is
-# what routes the hostname.
+# connection has to come back.
+#
+# "Is the process alive?" is the wrong question, and asking it produced the exact
+# failure it was meant to fix. cloudflared stays up with no edge connections at
+# all — Cloudflare answers those requests with error 1033 — and worse, two
+# instances of the same tunnel displace each other on every connect, so a second
+# one started because the first "looked missing" leaves neither able to hold a
+# connection. What matters is whether the tunnel has connections, which
+# Cloudflare itself will say.
 reconnect_named() {
-  local host="$1" name
+  local host="$1" id name
   command -v cloudflared >/dev/null 2>&1 || {
     echo "🚨 $host is served by something other than cloudflared — restart it yourself." >&2
     exit 1
   }
 
-  name="$(sed -n 's/^tunnel:[[:space:]]*//p' "$HOME/.cloudflared/config.yml" 2>/dev/null | head -1)"
-  [ -n "$name" ] || {
+  id="$(sed -n 's/^tunnel:[[:space:]]*//p' "$HOME/.cloudflared/config.yml" 2>/dev/null | head -1)"
+  [ -n "$id" ] || {
     echo "🚨 No tunnel named in ~/.cloudflared/config.yml — restart your tunnel yourself." >&2
     exit 1
   }
+  # It can be run by either, so both have to be recognised when looking for one.
+  name="$(cloudflared tunnel list 2>/dev/null | awk -v id="$id" '$1 == id { print $2 }' | head -1)"
 
-  if pgrep -f "cloudflared.*run .*$name" >/dev/null 2>&1; then
-    echo "  ✓ tunnel already running — $host needs nothing"
-  else
-    echo "→ restarting the named tunnel"
-    nohup cloudflared tunnel --protocol "$TUNNEL_PROTOCOL" --retries "$TUNNEL_RETRIES" run "$name" \
+  if cloudflared tunnel info "$id" 2>&1 | grep -q "does not have any active connection"; then
+    echo "→ tunnel is up but has no connection to Cloudflare — restarting it"
+    tunnel_pids "$id" "$name" | while read -r pid; do kill "$pid" 2>/dev/null || true; done
+    sleep 3
+    nohup cloudflared tunnel --protocol "$TUNNEL_PROTOCOL" --retries "$TUNNEL_RETRIES" run "$id" \
       > "$LOG_DIR/tunnel-named.log" 2>&1 &
     disown 2>/dev/null || true
     for _ in $(seq 1 30); do
-      grep -q "Registered tunnel connection" "$LOG_DIR/tunnel-named.log" 2>/dev/null && break
+      cloudflared tunnel info "$id" 2>&1 | grep -q "does not have any active connection" || break
       sleep 2
     done
-    grep -q "Registered tunnel connection" "$LOG_DIR/tunnel-named.log" 2>/dev/null \
-      && echo "  ✓ reconnected" \
-      || { echo "  ✗ did not reconnect — see $LOG_DIR/tunnel-named.log" >&2; exit 1; }
+    cloudflared tunnel info "$id" 2>&1 | grep -q "does not have any active connection" \
+      && { echo "  ✗ still no connection — see $LOG_DIR/tunnel-named.log" >&2; exit 1; } \
+      || echo "  ✓ reconnected"
+  else
+    echo "  ✓ tunnel is connected — $host needs nothing"
   fi
 
   # The front door resolved the containers once; if any were recreated while the
@@ -873,6 +884,14 @@ reconnect_named() {
 
   echo
   echo "Back at https://$host — the explorer was not touched, so nothing to re-add."
+}
+
+# Every cloudflared serving this tunnel, however it was started. Two instances of
+# one tunnel knock each other off, so finding all of them is the point.
+tunnel_pids() { # id, name
+  { pgrep -f "cloudflared.*run .*$1" 2>/dev/null
+    [ -n "$2" ] && pgrep -f "cloudflared.*run .*$2" 2>/dev/null
+  } | sort -u
 }
 
 cmd_local() {
