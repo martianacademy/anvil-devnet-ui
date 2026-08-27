@@ -385,8 +385,9 @@ same work in both cases:
 - **A quick tunnel** gets a different hostname every restart, so the explorer has to be re-addressed
   — and that does mean recreating it.
 
-It refuses to run in front of a stack that is down, rather than handing you a public address that
-serves 502s.
+If the stack itself is down it starts that too, then puts the address back where it was. The
+addressing is remembered on disk for exactly this reason — otherwise the only record of "this devnet
+is published at devnet.example.com" lives inside the explorer container, and disappears with it.
 
 ### A hostname of your own
 

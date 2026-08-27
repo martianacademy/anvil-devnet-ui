@@ -61,11 +61,20 @@ set -- "${ARGS[@]+"${ARGS[@]}"}"
 # is already running, and what matters there is how it is running — not what was
 # typed. Asking the containers removes a flag people have to remember, and with
 # it a whole class of "it worked, but through the wrong path".
+MODE_STATE="$LOG_DIR/mode"
+
 case "${1:-up}" in
   up|reset) ;;
   *)
-    if [ "$DOCKER_MODE" = "0" ] && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx devnet-api; then
-      DOCKER_MODE=1
+    if [ "$DOCKER_MODE" = "0" ]; then
+      if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx devnet-api; then
+        DOCKER_MODE=1
+      elif [ "$(cat "$MODE_STATE" 2>/dev/null)" = "docker" ]; then
+        # Nothing is running, so the containers cannot answer — which is exactly
+        # when a command like `reconnect` has to bring them back, and starting
+        # the wrong kind of stack is worse than not starting one.
+        DOCKER_MODE=1
+      fi
     fi
     ;;
 esac
@@ -133,6 +142,7 @@ start_anvil() {
 }
 
 cmd_up_docker() {
+  mkdir -p "$LOG_DIR"; echo docker > "$MODE_STATE"
   # Detected here rather than at the top: detect_lan_ip is defined further down,
   # and an address picked up at boot goes stale when the laptop changes network.
   [ -n "$DEVNET_HOST_IP" ] || DEVNET_HOST_IP="$(detect_lan_ip)"
@@ -172,6 +182,8 @@ cmd_up_docker() {
 
 cmd_up() {
   if [ "$DOCKER_MODE" = "1" ]; then cmd_up_docker; return; fi
+
+  mkdir -p "$LOG_DIR"; echo host > "$MODE_STATE"
 
   if [ ! -d "$COMPOSE_DIR" ] || [ ! -d "$FRONTEND_DIR" ]; then
     echo "🚨 Blockscout is not set up yet — run ./stack/setup.sh first." >&2
@@ -338,11 +350,19 @@ detect_lan_ip() {
 # The port arguments are deliberately allowed to be empty: behind a tunnel or a
 # reverse proxy the port is part of the scheme and must not appear in the URL.
 TUNNEL_STATE="$LOG_DIR/tunnels"
+# The addressing outlives the containers that serve it. Without this, the only
+# record of "this devnet is published at devanvil.example.com" lives inside the
+# explorer container — so the moment the stack is down, nothing knows where it is
+# supposed to come back up.
+PUBLIC_STATE="$LOG_DIR/public-address"
 
 apply_public_config() { # app_proto app_host app_port api_proto api_host api_port ws_proto rpc_url
   export DEVNET_PUBLIC_PROTOCOL="$1" DEVNET_PUBLIC_HOST="$2" DEVNET_PUBLIC_PORT="$3"
   export DEVNET_API_PROTOCOL="$4" DEVNET_API_PUBLIC_HOST="$5" DEVNET_API_PUBLIC_PORT="$6"
   export DEVNET_WS_PROTOCOL="$7" DEVNET_PUBLIC_RPC_URL="$8"
+
+  mkdir -p "$LOG_DIR"
+  printf '%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" > "$PUBLIC_STATE"
 
   if [ "$DOCKER_MODE" = "1" ]; then
     # The containerised UI has no .env.local — its public URLs come from compose,
@@ -762,18 +782,42 @@ cmd_domain() {
 cmd_reconnect() {
   mkdir -p "$LOG_DIR"
 
-  # Reconnecting in front of a stack that is not running would produce a public
-  # address serving 502s, which is worse than saying so.
-  curl -sf -m 5 -o /dev/null "http://localhost:$DEVNET_API_PORT/api/anvil/status" || {
-    echo "🚨 The control API is not answering — start the stack first: ./devnet.sh up${DOCKER_SUFFIX}" >&2
-    exit 1
-  }
+  # A stack that is down is not a reason to refuse — it is the usual reason the
+  # address stopped answering. Bring it back, then put it where it was.
+  if ! curl -sf -m 5 -o /dev/null "http://localhost:$DEVNET_API_PORT/api/anvil/status"; then
+    [ -f "$PUBLIC_STATE" ] || {
+      echo "🚨 Nothing is running and no address is remembered." >&2
+      echo "   ./devnet.sh up${DOCKER_SUFFIX} then ./devnet.sh domain <host>." >&2
+      exit 1
+    }
+    echo "→ the stack is down; starting it first"
+    cmd_up
+  fi
 
-  # What the explorer is currently telling browsers is the only reliable record
-  # of which mode is in effect; nothing else survives a reboot.
+  # Prefer what the explorer is actually serving; fall back to what was last
+  # applied, which is the only record left once the container is gone.
   local host
   host="$(curl -sf -m 5 "http://localhost:3000/assets/envs.js" 2>/dev/null \
     | sed -n 's/.*NEXT_PUBLIC_APP_HOST: "\([^"]*\)".*/\1/p' | head -1)"
+
+  case "$host" in
+    ""|localhost|127.0.0.1)
+      if [ -f "$PUBLIC_STATE" ]; then
+        echo "→ restoring the remembered address"
+        # Read line by line rather than word-splitting the file: behind a tunnel
+        # the ports are deliberately empty, and splitting would drop them and
+        # shift every argument after into the wrong slot.
+        local saved=()
+        while IFS= read -r line; do saved+=("$line"); done < "$PUBLIC_STATE"
+        [ "${#saved[@]}" -eq 8 ] || {
+          echo "🚨 $PUBLIC_STATE is malformed — re-run ./devnet.sh domain <host>." >&2
+          exit 1
+        }
+        apply_public_config "${saved[@]}"
+        host="${saved[1]}"
+      fi
+      ;;
+  esac
 
   case "$host" in
     ""|localhost|127.0.0.1|[0-9]*)
