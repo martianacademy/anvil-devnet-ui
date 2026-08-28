@@ -58,7 +58,9 @@ export async function POST(req: Request) {
 
         // A fresh node means a fresh chain: point the explorer at it and drop the
         // index of whatever chain it was serving before.
-        const explorerSync = syncExplorer(resolved.chainId, resolved.port);
+        // On a fork, the indexer must start at the fork block. From 0 it would walk
+        // the forked chain's whole history through the fork RPC.
+        const explorerSync = syncExplorer(resolved.chainId, resolved.port, resolved.forkBlockNumber ?? 0);
 
         return {
             success: true,

@@ -104,7 +104,7 @@ let lastSeen: { chainId: number; port: number } | null = null;
  * same identity before the stack is recreated, so a node that is mid-restart does
  * not cost a full reindex.
  */
-export function followNode(node: { chainId: number; port: number }): void {
+export function followNode(node: { chainId: number; port: number; forkBlockNumber?: number | null }): void {
     if (AUTOSYNC_DISABLED || store.state.status === "syncing") {
         return;
     }
@@ -127,7 +127,9 @@ export function followNode(node: { chainId: number; port: number }): void {
     }
 
     lastFollowAt = Date.now();
-    syncExplorer(node.chainId, node.port);
+    // A fork the watcher picked up needs its fork block carried through, or the
+    // follow undoes exactly what starting it got right.
+    syncExplorer(node.chainId, node.port, node.forkBlockNumber ?? 0);
 }
 
 /** Where the Blockscout compose files live — cloned next to this repo by stack/setup.sh. */
@@ -349,7 +351,15 @@ async function syncFrontend(chainId: number, port: number): Promise<void> {
  * Recreate the Blockscout stack for `chainId`/`port` with an empty database.
  * Returns immediately; progress is readable through {@link getExplorerSyncState}.
  */
-export function syncExplorer(chainId: number, port: number): ExplorerSyncState {
+/**
+ * @param firstBlock Height the indexer starts from. On a fork this has to be the
+ *   fork block: Blockscout indexes from FIRST_BLOCK upwards, so leaving it at 0
+ *   sends the catchup indexer down the forked chain's entire history — every
+ *   mainnet block since genesis, through the fork RPC, which is neither what
+ *   anyone wants to see in a devnet explorer nor something a public endpoint
+ *   will serve.
+ */
+export function syncExplorer(chainId: number, port: number, firstBlock = 0): ExplorerSyncState {
     if (AUTOSYNC_DISABLED) {
         return store.state;
     }
@@ -372,7 +382,7 @@ export function syncExplorer(chainId: number, port: number): ExplorerSyncState {
     const env = {
         DEVNET_RPC_PORT: String(port),
         DEVNET_CHAIN_ID: String(chainId),
-        DEVNET_FIRST_BLOCK: "0",
+        DEVNET_FIRST_BLOCK: String(firstBlock),
         // Which host the indexer reaches the node on. On the host path that is
         // the Docker host; when this API runs as a container, the node is inside
         // it and host.docker.internal would point at the wrong machine.

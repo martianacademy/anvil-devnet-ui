@@ -288,8 +288,13 @@ curl -X POST http://localhost:3010/api/patches/code \
 
 The explorer then shows it as Tether USD (USDT) and indexes its transfers like any other token.
 
-Forking pulls the upstream chain's blocks and history into your explorer, which is rarely what you
-want on a devnet — and public RPCs are unreliable enough that Anvil can panic mid-mine against them.
+When you do fork, the explorer is pinned to the fork block: Blockscout indexes upward from
+`FIRST_BLOCK`, so leaving it at 0 sends the catchup indexer down the forked chain's entire history —
+every mainnet block since genesis, fetched through your fork RPC. Starting a fork from `/devnet`, the
+API or `./devnet.sh fork` all set it, and the watcher carries it through when it follows the node.
+
+Public RPCs are also unreliable enough that Anvil can panic mid-mine against them; a paid endpoint is
+worth it if you fork often.
 
 ---
 
